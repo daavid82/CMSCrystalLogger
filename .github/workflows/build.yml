@@ -1,0 +1,46 @@
+
+name: Build CMSCrystalLogger
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Compile iOS dylib
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+
+          xcrun --sdk iphoneos clang \
+            -arch arm64 \
+            -isysroot "$SDK" \
+            -miphoneos-version-min=15.0 \
+            -fobjc-arc \
+            -dynamiclib \
+            -framework UIKit \
+            -framework Foundation \
+            -install_name @rpath/CMSCrystalLogger.dylib \
+            CMSCrystalLogger.m \
+            -o CMSCrystalLogger.dylib
+
+      - name: Verify output
+        run: |
+          file CMSCrystalLogger.dylib
+          xcrun dwarfdump --uuid CMSCrystalLogger.dylib
+
+      - name: Upload dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: CMSCrystalLogger
+          path: CMSCrystalLogger.dylib
