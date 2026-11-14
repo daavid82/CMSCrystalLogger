@@ -3,42 +3,21 @@
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <mach-o/dyld.h>
-#import <dlfcn.h>
-#import <stdint.h>
-
-extern int DobbyHook(void *address, void *replace_call, void **origin_call);
-
-__attribute__((noinline, used))
-static int CMSDiagnosticTarget(int value) {
-    volatile int result = value + 7;
-    return result;
-}
-
-static int (*CMSOriginalTarget)(int) = NULL;
-static volatile int CMSHookCalls = 0;
-
-__attribute__((noinline))
-static int CMSDiagnosticReplacement(int value) {
-    CMSHookCalls++;
-
-    if (CMSOriginalTarget) {
-        return CMSOriginalTarget(value) + 100;
-    }
-
-    return -999;
-}
 
 @interface CMSLogger : NSObject
 
 @property (nonatomic, strong) UIWindow *window;
 @property (nonatomic, strong) UITextView *logView;
 @property (nonatomic, strong) UILabel *counterLabel;
+@property (nonatomic, strong) UILabel *raidLabel;
 @property (nonatomic, strong) NSMutableArray<NSString *> *events;
-@property (nonatomic, assign) NSInteger spinCount;
-@property (nonatomic, assign) NSInteger totalSpins;
-@property (nonatomic, assign) NSInteger attackCount;
+
+@property (nonatomic, assign) NSInteger spins;
+@property (nonatomic, assign) NSInteger attacks;
+@property (nonatomic, assign) NSInteger raids;
+@property (nonatomic, assign) NSInteger symbols;
+@property (nonatomic, assign) NSInteger raidStack;
 @property (nonatomic, assign) NSInteger attempts;
-@property (nonatomic, assign) BOOL hookInstalled;
 
 + (instancetype)shared;
 - (void)start;
@@ -89,29 +68,38 @@ static int CMSDiagnosticReplacement(int value) {
                     encoding:NSUTF8StringEncoding
                        error:nil];
 
-        self.logView.text = content;
+        if (self.logView) {
+            self.logView.text = content;
 
-        if (self.logView.text.length > 0) {
-            [self.logView scrollRangeToVisible:
-                NSMakeRange(self.logView.text.length - 1, 1)];
+            if (content.length > 0) {
+                [self.logView scrollRangeToVisible:
+                    NSMakeRange(content.length - 1, 1)];
+            }
         }
 
         NSLog(@"[CMSCrystalLogger] %@", line);
     });
 }
 
-- (void)updateCounter {
+- (void)updateCounters {
     self.counterLabel.text = [NSString stringWithFormat:
-        @"SPIN: %ld  TOTAL: %ld  ATTACK: %ld",
-        (long)self.spinCount,
-        (long)self.totalSpins,
-        (long)self.attackCount];
+        @"SPIN: %ld   ATTACK: %ld   RAID: %ld",
+        (long)self.spins,
+        (long)self.attacks,
+        (long)self.raids];
+
+    self.raidLabel.text = [NSString stringWithFormat:
+        @"STACK: %ld   SYMBOLS: %ld",
+        (long)self.raidStack,
+        (long)self.symbols];
 }
 
 - (void)start {
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self addEvent:@"LOGGER V5 INITIALIZED"];
-        [self addEvent:@"MODE: DOBBY SELF TEST"];
+        [self addEvent:@"CMSCRYSTALLOGGER V6"];
+        [self addEvent:@"SAFE MODE ACTIVE"];
+        [self addEvent:@"NO DOBBY HOOKS"];
+        [self addEvent:@"MANUAL TRACKING"];
         [self tryShowPanel];
     });
 }
@@ -155,60 +143,8 @@ static int CMSDiagnosticReplacement(int value) {
         [self addEvent:@"UNITYFRAMEWORK NOT FOUND"];
     }
 
-    [self addEvent:@"DOBBY: STATIC LINK TEST AVAILABLE"];
-    [self addEvent:@"PRESS DOBBY TEST"];
+    [self addEvent:@"HOOKING DISABLED"];
     [self addEvent:@"DIAGNOSTICS COMPLETE"];
-}
-
-- (void)testDobby {
-    [self addEvent:@"DOBBY SELF TEST START"];
-
-    if (self.hookInstalled) {
-        int result = CMSDiagnosticTarget(5);
-
-        [self addEvent:[NSString stringWithFormat:
-            @"RETEST RESULT: %d", result]];
-
-        [self addEvent:[NSString stringWithFormat:
-            @"HOOK CALLS: %d", CMSHookCalls]];
-
-        return;
-    }
-
-    int before = CMSDiagnosticTarget(5);
-
-    [self addEvent:[NSString stringWithFormat:
-        @"BEFORE HOOK: %d", before]];
-
-    int status = DobbyHook(
-        (void *)&CMSDiagnosticTarget,
-        (void *)&CMSDiagnosticReplacement,
-        (void **)&CMSOriginalTarget
-    );
-
-    [self addEvent:[NSString stringWithFormat:
-        @"DOBBY STATUS: %d", status]];
-
-    if (status != 0) {
-        [self addEvent:@"DOBBY HOOK FAILED"];
-        return;
-    }
-
-    self.hookInstalled = YES;
-
-    int after = CMSDiagnosticTarget(5);
-
-    [self addEvent:[NSString stringWithFormat:
-        @"AFTER HOOK: %d", after]];
-
-    [self addEvent:[NSString stringWithFormat:
-        @"HOOK CALLS: %d", CMSHookCalls]];
-
-    if (before == 12 && after == 112 && CMSHookCalls > 0) {
-        [self addEvent:@"DOBBY SELF TEST PASSED"];
-    } else {
-        [self addEvent:@"DOBBY SELF TEST INCONCLUSIVE"];
-    }
 }
 
 - (void)tryShowPanel {
@@ -241,25 +177,63 @@ static int CMSDiagnosticReplacement(int value) {
         } else {
             [self addEvent:@"WINDOW NOT FOUND"];
         }
+
         return;
     }
 
     [self createPanelInScene:activeScene];
 }
 
+- (UIButton *)makeButton:(NSString *)title
+                  frame:(CGRect)frame
+                 action:(SEL)action
+                 parent:(UIView *)parent {
+
+    UIButton *button =
+        [UIButton buttonWithType:UIButtonTypeSystem];
+
+    button.frame = frame;
+
+    [button setTitle:title
+           forState:UIControlStateNormal];
+
+    [button setTitleColor:UIColor.whiteColor
+                forState:UIControlStateNormal];
+
+    button.titleLabel.font =
+        [UIFont boldSystemFontOfSize:12];
+
+    button.backgroundColor =
+        [UIColor colorWithWhite:0.22 alpha:1];
+
+    button.layer.cornerRadius = 8;
+
+    [button addTarget:self
+               action:action
+     forControlEvents:UIControlEventTouchUpInside];
+
+    [parent addSubview:button];
+
+    return button;
+}
+
 - (void)createPanelInScene:(UIWindowScene *)scene {
     CGRect screen = scene.coordinateSpace.bounds;
 
-    CGFloat width = MIN(330, screen.size.width - 24);
-    CGFloat height = 280;
+    CGFloat width = MIN(350, screen.size.width - 24);
+    CGFloat height = 370;
 
     self.window =
         [[UIWindow alloc] initWithWindowScene:scene];
 
-    self.window.frame = CGRectMake(12, 90, width, height);
-    self.window.windowLevel = UIWindowLevelAlert + 1;
+    self.window.frame =
+        CGRectMake(12, 70, width, height);
 
-    UIViewController *controller = [UIViewController new];
+    self.window.windowLevel =
+        UIWindowLevelAlert + 1;
+
+    UIViewController *controller =
+        [UIViewController new];
 
     controller.view.backgroundColor =
         [UIColor colorWithRed:0.07
@@ -275,7 +249,7 @@ static int CMSDiagnosticReplacement(int value) {
     UILabel *title = [[UILabel alloc]
         initWithFrame:CGRectMake(12, 8, width - 24, 28)];
 
-    title.text = @"CMSCrystalLogger v5";
+    title.text = @"CMSCrystalLogger v6 SAFE";
     title.textColor = UIColor.whiteColor;
     title.font = [UIFont boldSystemFontOfSize:16];
     title.userInteractionEnabled = YES;
@@ -292,64 +266,96 @@ static int CMSDiagnosticReplacement(int value) {
     self.counterLabel = [[UILabel alloc]
         initWithFrame:CGRectMake(12, 38, width - 24, 24)];
 
-    self.counterLabel.textColor = UIColor.whiteColor;
+    self.counterLabel.textColor =
+        UIColor.whiteColor;
+
     self.counterLabel.font =
-        [UIFont monospacedSystemFontOfSize:12
+        [UIFont monospacedSystemFontOfSize:11
                                    weight:UIFontWeightBold];
 
     [controller.view addSubview:self.counterLabel];
-    [self updateCounter];
+
+    self.raidLabel = [[UILabel alloc]
+        initWithFrame:CGRectMake(12, 62, width - 24, 24)];
+
+    self.raidLabel.textColor =
+        UIColor.systemGreenColor;
+
+    self.raidLabel.font =
+        [UIFont monospacedSystemFontOfSize:12
+                                   weight:UIFontWeightBold];
+
+    [controller.view addSubview:self.raidLabel];
+
+    [self updateCounters];
 
     self.logView = [[UITextView alloc]
-        initWithFrame:CGRectMake(10, 68, width - 20, 145)];
+        initWithFrame:CGRectMake(10, 92, width - 20, 145)];
 
-    self.logView.backgroundColor = UIColor.clearColor;
-    self.logView.textColor = UIColor.greenColor;
+    self.logView.backgroundColor =
+        UIColor.clearColor;
+
+    self.logView.textColor =
+        UIColor.greenColor;
+
     self.logView.font =
         [UIFont monospacedSystemFontOfSize:11
                                    weight:UIFontWeightRegular];
 
     self.logView.editable = NO;
+
     self.logView.text =
         [self.events componentsJoinedByString:@"\n"];
 
     [controller.view addSubview:self.logView];
 
-    NSArray *titles =
-        @[@"DIAGNOSE", @"DOBBY TEST", @"COPY"];
+    CGFloat gap = 6;
+    CGFloat buttonWidth = (width - 36 - gap * 2) / 3;
 
-    SEL actions[] = {
-        @selector(runDiagnostics),
-        @selector(testDobby),
-        @selector(copyLog)
+    NSArray *titles1 =
+        @[@"SPIN +1", @"ATTACK", @"RAID"];
+
+    SEL actions1[] = {
+        @selector(addSpin),
+        @selector(addAttack),
+        @selector(addRaid)
     };
 
-    CGFloat buttonWidth = (width - 48) / 3.0;
+    NSArray *titles2 =
+        @[@"SYMBOL +1", @"STACK +1", @"STACK -1"];
+
+    SEL actions2[] = {
+        @selector(addSymbol),
+        @selector(addStack),
+        @selector(removeStack)
+    };
+
+    NSArray *titles3 =
+        @[@"DIAGNOSE", @"COPY", @"RESET"];
+
+    SEL actions3[] = {
+        @selector(runDiagnostics),
+        @selector(copyLog),
+        @selector(resetCounters)
+    };
 
     for (NSInteger i = 0; i < 3; i++) {
-        UIButton *button =
-            [UIButton buttonWithType:UIButtonTypeSystem];
+        CGFloat x = 12 + i * (buttonWidth + gap);
 
-        button.frame = CGRectMake(
-            12 + i * (buttonWidth + 6),
-            224, buttonWidth, 42);
+        [self makeButton:titles1[i]
+                  frame:CGRectMake(x, 245, buttonWidth, 34)
+                 action:actions1[i]
+                 parent:controller.view];
 
-        [button setTitle:titles[i]
-               forState:UIControlStateNormal];
+        [self makeButton:titles2[i]
+                  frame:CGRectMake(x, 285, buttonWidth, 34)
+                 action:actions2[i]
+                 parent:controller.view];
 
-        [button setTitleColor:UIColor.whiteColor
-                    forState:UIControlStateNormal];
-
-        button.backgroundColor =
-            [UIColor colorWithWhite:0.22 alpha:1];
-
-        button.layer.cornerRadius = 8;
-
-        [button addTarget:self
-                   action:actions[i]
-         forControlEvents:UIControlEventTouchUpInside];
-
-        [controller.view addSubview:button];
+        [self makeButton:titles3[i]
+                  frame:CGRectMake(x, 325, buttonWidth, 34)
+                 action:actions3[i]
+                 parent:controller.view];
     }
 
     self.window.hidden = NO;
@@ -374,6 +380,56 @@ static int CMSDiagnosticReplacement(int value) {
                     inView:self.window];
 }
 
+- (void)addSpin {
+    self.spins++;
+    [self updateCounters];
+    [self addEvent:@"SPIN +1"];
+}
+
+- (void)addAttack {
+    self.attacks++;
+    [self updateCounters];
+    [self addEvent:@"ATTACK +1"];
+}
+
+- (void)addRaid {
+    self.raids++;
+    [self updateCounters];
+    [self addEvent:@"RAID +1"];
+}
+
+- (void)addSymbol {
+    self.symbols++;
+    [self updateCounters];
+    [self addEvent:@"SYMBOL +1"];
+}
+
+- (void)addStack {
+    self.raidStack++;
+    [self updateCounters];
+    [self addEvent:@"RAID STACK +1"];
+}
+
+- (void)removeStack {
+    if (self.raidStack > 0) {
+        self.raidStack--;
+    }
+
+    [self updateCounters];
+    [self addEvent:@"RAID STACK -1"];
+}
+
+- (void)resetCounters {
+    self.spins = 0;
+    self.attacks = 0;
+    self.raids = 0;
+    self.symbols = 0;
+    self.raidStack = 0;
+
+    [self updateCounters];
+    [self addEvent:@"COUNTERS RESET"];
+}
+
 - (void)copyLog {
     UIPasteboard.generalPasteboard.string =
         [self.events componentsJoinedByString:@"\n"];
@@ -385,7 +441,7 @@ static int CMSDiagnosticReplacement(int value) {
 
 __attribute__((constructor))
 static void CMSLoggerInitialize(void) {
-    NSLog(@"[CMSCrystalLogger] DYLIB LOADED");
+    NSLog(@"[CMSCrystalLogger] V6 DYLIB LOADED");
 
     dispatch_async(dispatch_get_main_queue(), ^{
         [[CMSLogger shared] start];
