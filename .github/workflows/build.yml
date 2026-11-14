@@ -33,7 +33,7 @@ jobs:
             -DCMAKE_SYSTEM_PROCESSOR=arm64 \
             -DDOBBY_GENERATE_SHARED=OFF
 
-          cmake --build dobby-build --config Release
+          cmake --build dobby-build --config Release --target dobby_static -- CODE_SIGNING_ALLOWED=NO
 
           find dobby-build -name "libdobby.a"
 
