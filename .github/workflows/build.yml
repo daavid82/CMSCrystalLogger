@@ -30,6 +30,8 @@ jobs:
             -dynamiclib \
             -framework UIKit \
             -framework Foundation \
+            -framework CoreGraphics \
+            -framework Foundation \
             -install_name @rpath/CMSCrystalLogger.dylib \
             CMSCrystalLogger.m \
             -o CMSCrystalLogger.dylib
