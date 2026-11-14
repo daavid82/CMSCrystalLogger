@@ -1,3 +1,4 @@
+
 name: Build CMSCrystalLogger
 
 on:
@@ -17,7 +18,25 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
-      - name: Compile iOS dylib
+      - name: Download Dobby
+        run: |
+          git clone --recursive --depth 1 https://github.com/jmpews/Dobby.git dobby
+
+      - name: Build Dobby for iPhone
+        run: |
+          cmake -S dobby -B dobby-build \
+            -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+            -DDOBBY_GENERATE_SHARED=OFF
+
+          cmake --build dobby-build --config Release
+
+          find dobby-build -name "libdobby.a"
+
+      - name: Compile CMSCrystalLogger v4
         run: |
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 
@@ -30,7 +49,6 @@ jobs:
             -framework UIKit \
             -framework Foundation \
             -framework CoreGraphics \
-            -framework Foundation \
             -install_name @rpath/CMSCrystalLogger.dylib \
             CMSCrystalLogger.m \
             -o CMSCrystalLogger.dylib
