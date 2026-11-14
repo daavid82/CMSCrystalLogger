@@ -83,23 +83,22 @@
 
 - (void)updateCounters {
     self.counterLabel.text = [NSString stringWithFormat:
-        @"SPIN: %ld   ATTACK: %ld   RAID: %ld",
+        @"SPIN: %ld  ATTACK: %ld  RAID: %ld",
         (long)self.spins,
         (long)self.attacks,
         (long)self.raids];
 
     self.raidLabel.text = [NSString stringWithFormat:
-        @"STACK: %ld   SYMBOLS: %ld",
+        @"STACK: %ld  SYMBOLS: %ld",
         (long)self.raidStack,
         (long)self.symbols];
 }
 
 - (void)start {
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self addEvent:@"CMSCRYSTALLOGGER V6"];
-        [self addEvent:@"SAFE MODE ACTIVE"];
+        [self addEvent:@"CMSCRYSTALLOGGER V7"];
+        [self addEvent:@"SCREEN TEST MODE"];
         [self addEvent:@"NO DOBBY HOOKS"];
-        [self addEvent:@"MANUAL TRACKING"];
         [self tryShowPanel];
     });
 }
@@ -109,9 +108,7 @@
 
     BOOL foundUnity = NO;
 
-    uint32_t count = _dyld_image_count();
-
-    for (uint32_t i = 0; i < count; i++) {
+    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
         const char *name = _dyld_get_image_name(i);
 
         if (!name) continue;
@@ -122,20 +119,14 @@
         if ([imageName containsString:@"UnityFramework"]) {
             foundUnity = YES;
 
-            const struct mach_header *header =
-                _dyld_get_image_header(i);
-
-            intptr_t slide =
-                _dyld_get_image_vmaddr_slide(i);
-
             [self addEvent:@"UNITYFRAMEWORK FOUND"];
 
             [self addEvent:[NSString stringWithFormat:
-                @"IMAGE HEADER: %p", (void *)header]];
-
-            [self addEvent:[NSString stringWithFormat:
                 @"ASLR SLIDE: 0x%llx",
-                (unsigned long long)(uint64_t)slide]];
+                (unsigned long long)(uint64_t)
+                    _dyld_get_image_vmaddr_slide(i)]];
+
+            break;
         }
     }
 
@@ -145,6 +136,92 @@
 
     [self addEvent:@"HOOKING DISABLED"];
     [self addEvent:@"DIAGNOSTICS COMPLETE"];
+}
+
+- (void)screenTest {
+    [self addEvent:@"SCREEN TEST START"];
+
+    UIWindow *gameWindow = nil;
+
+    for (UIWindowScene *scene in
+         UIApplication.sharedApplication.connectedScenes) {
+
+        if (![scene isKindOfClass:[UIWindowScene class]]) {
+            continue;
+        }
+
+        for (UIWindow *candidate in scene.windows) {
+            if (candidate == self.window) continue;
+            if (candidate.hidden) continue;
+            if (candidate.bounds.size.width < 100) continue;
+
+            if (!gameWindow ||
+                candidate.windowLevel < gameWindow.windowLevel) {
+                gameWindow = candidate;
+            }
+        }
+    }
+
+    if (!gameWindow) {
+        [self addEvent:@"SCREEN TEST: GAME WINDOW NOT FOUND"];
+        return;
+    }
+
+    CGSize size = gameWindow.bounds.size;
+
+    [self addEvent:[NSString stringWithFormat:
+        @"GAME WINDOW: %.0f x %.0f",
+        size.width, size.height]];
+
+    UIGraphicsImageRendererFormat *format =
+        [UIGraphicsImageRendererFormat defaultFormat];
+
+    format.scale = 1.0;
+    format.opaque = YES;
+
+    UIGraphicsImageRenderer *renderer =
+        [[UIGraphicsImageRenderer alloc]
+            initWithSize:size format:format];
+
+    UIImage *image = [renderer imageWithActions:
+        ^(UIGraphicsImageRendererContext *context) {
+
+        [gameWindow drawViewHierarchyInRect:
+            CGRectMake(0, 0, size.width, size.height)
+            afterScreenUpdates:NO];
+    }];
+
+    if (!image) {
+        [self addEvent:@"SCREEN TEST: IMAGE FAILED"];
+        return;
+    }
+
+    NSData *data = UIImagePNGRepresentation(image);
+
+    if (!data) {
+        [self addEvent:@"SCREEN TEST: PNG FAILED"];
+        return;
+    }
+
+    NSString *path =
+        [NSTemporaryDirectory()
+            stringByAppendingPathComponent:
+                @"CMSCrystalScreenTest.png"];
+
+    BOOL saved = [data writeToFile:path atomically:YES];
+
+    if (saved) {
+        [self addEvent:@"SCREEN TEST: IMAGE SAVED"];
+
+        [self addEvent:[NSString stringWithFormat:
+            @"IMAGE BYTES: %lu",
+            (unsigned long)data.length]];
+
+        [self addEvent:@"SCREEN TEST: CAPTURE COMPLETED"];
+        [self addEvent:@"UNITY CONTENT NOT YET VERIFIED"];
+    } else {
+        [self addEvent:@"SCREEN TEST: SAVE FAILED"];
+    }
 }
 
 - (void)tryShowPanel {
@@ -249,7 +326,7 @@
     UILabel *title = [[UILabel alloc]
         initWithFrame:CGRectMake(12, 8, width - 24, 28)];
 
-    title.text = @"CMSCrystalLogger v6 SAFE";
+    title.text = @"CMSCrystalLogger v7 SCREEN";
     title.textColor = UIColor.whiteColor;
     title.font = [UIFont boldSystemFontOfSize:16];
     title.userInteractionEnabled = YES;
@@ -266,9 +343,7 @@
     self.counterLabel = [[UILabel alloc]
         initWithFrame:CGRectMake(12, 38, width - 24, 24)];
 
-    self.counterLabel.textColor =
-        UIColor.whiteColor;
-
+    self.counterLabel.textColor = UIColor.whiteColor;
     self.counterLabel.font =
         [UIFont monospacedSystemFontOfSize:11
                                    weight:UIFontWeightBold];
@@ -278,9 +353,7 @@
     self.raidLabel = [[UILabel alloc]
         initWithFrame:CGRectMake(12, 62, width - 24, 24)];
 
-    self.raidLabel.textColor =
-        UIColor.systemGreenColor;
-
+    self.raidLabel.textColor = UIColor.systemGreenColor;
     self.raidLabel.font =
         [UIFont monospacedSystemFontOfSize:12
                                    weight:UIFontWeightBold];
@@ -292,18 +365,13 @@
     self.logView = [[UITextView alloc]
         initWithFrame:CGRectMake(10, 92, width - 20, 145)];
 
-    self.logView.backgroundColor =
-        UIColor.clearColor;
-
-    self.logView.textColor =
-        UIColor.greenColor;
-
+    self.logView.backgroundColor = UIColor.clearColor;
+    self.logView.textColor = UIColor.greenColor;
     self.logView.font =
         [UIFont monospacedSystemFontOfSize:11
                                    weight:UIFontWeightRegular];
 
     self.logView.editable = NO;
-
     self.logView.text =
         [self.events componentsJoinedByString:@"\n"];
 
@@ -331,10 +399,10 @@
     };
 
     NSArray *titles3 =
-        @[@"DIAGNOSE", @"COPY", @"RESET"];
+        @[@"SCREEN TEST", @"COPY", @"RESET"];
 
     SEL actions3[] = {
-        @selector(runDiagnostics),
+        @selector(screenTest),
         @selector(copyLog),
         @selector(resetCounters)
     };
@@ -441,7 +509,7 @@
 
 __attribute__((constructor))
 static void CMSLoggerInitialize(void) {
-    NSLog(@"[CMSCrystalLogger] V6 DYLIB LOADED");
+    NSLog(@"[CMSCrystalLogger] V7 DYLIB LOADED");
 
     dispatch_async(dispatch_get_main_queue(), ^{
         [[CMSLogger shared] start];
