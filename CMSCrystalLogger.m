@@ -4,6 +4,29 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <mach-o/dyld.h>
 #import <dlfcn.h>
+#import <stdint.h>
+
+extern int DobbyHook(void *address, void *replace_call, void **origin_call);
+
+__attribute__((noinline, used))
+static int CMSDiagnosticTarget(int value) {
+    volatile int result = value + 7;
+    return result;
+}
+
+static int (*CMSOriginalTarget)(int) = NULL;
+static volatile int CMSHookCalls = 0;
+
+__attribute__((noinline))
+static int CMSDiagnosticReplacement(int value) {
+    CMSHookCalls++;
+
+    if (CMSOriginalTarget) {
+        return CMSOriginalTarget(value) + 100;
+    }
+
+    return -999;
+}
 
 @interface CMSLogger : NSObject
 
@@ -11,11 +34,11 @@
 @property (nonatomic, strong) UITextView *logView;
 @property (nonatomic, strong) UILabel *counterLabel;
 @property (nonatomic, strong) NSMutableArray<NSString *> *events;
-@property (nonatomic, strong) NSMutableArray<NSNumber *> *history;
 @property (nonatomic, assign) NSInteger spinCount;
 @property (nonatomic, assign) NSInteger totalSpins;
 @property (nonatomic, assign) NSInteger attackCount;
 @property (nonatomic, assign) NSInteger attempts;
+@property (nonatomic, assign) BOOL hookInstalled;
 
 + (instancetype)shared;
 - (void)start;
@@ -32,7 +55,6 @@
     dispatch_once(&once, ^{
         logger = [CMSLogger new];
         logger.events = [NSMutableArray new];
-        logger.history = [NSMutableArray new];
     });
 
     return logger;
@@ -88,8 +110,8 @@
 
 - (void)start {
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self addEvent:@"LOGGER V4 INITIALIZED"];
-        [self addEvent:@"MODE: HOOK DIAGNOSTIC"];
+        [self addEvent:@"LOGGER V5 INITIALIZED"];
+        [self addEvent:@"MODE: DOBBY SELF TEST"];
         [self tryShowPanel];
     });
 }
@@ -115,7 +137,8 @@
             const struct mach_header *header =
                 _dyld_get_image_header(i);
 
-            intptr_t slide = _dyld_get_image_vmaddr_slide(i);
+            intptr_t slide =
+                _dyld_get_image_vmaddr_slide(i);
 
             [self addEvent:@"UNITYFRAMEWORK FOUND"];
 
@@ -132,28 +155,60 @@
         [self addEvent:@"UNITYFRAMEWORK NOT FOUND"];
     }
 
-    void *substrate = dlsym(
-        RTLD_DEFAULT, "MSHookFunction");
-
-    void *dobby = dlsym(
-        RTLD_DEFAULT, "DobbyHook");
-
-    void *libhooker = dlsym(
-        RTLD_DEFAULT, "LHHookFunctions");
-
-    [self addEvent:[NSString stringWithFormat:
-        @"MSHookFunction: %@",
-        substrate ? @"FOUND" : @"NOT FOUND"]];
-
-    [self addEvent:[NSString stringWithFormat:
-        @"DobbyHook: %@",
-        dobby ? @"FOUND" : @"NOT FOUND"]];
-
-    [self addEvent:[NSString stringWithFormat:
-        @"LHHookFunctions: %@",
-        libhooker ? @"FOUND" : @"NOT FOUND"]];
-
+    [self addEvent:@"DOBBY: STATIC LINK TEST AVAILABLE"];
+    [self addEvent:@"PRESS DOBBY TEST"];
     [self addEvent:@"DIAGNOSTICS COMPLETE"];
+}
+
+- (void)testDobby {
+    [self addEvent:@"DOBBY SELF TEST START"];
+
+    if (self.hookInstalled) {
+        int result = CMSDiagnosticTarget(5);
+
+        [self addEvent:[NSString stringWithFormat:
+            @"RETEST RESULT: %d", result]];
+
+        [self addEvent:[NSString stringWithFormat:
+            @"HOOK CALLS: %d", CMSHookCalls]];
+
+        return;
+    }
+
+    int before = CMSDiagnosticTarget(5);
+
+    [self addEvent:[NSString stringWithFormat:
+        @"BEFORE HOOK: %d", before]];
+
+    int status = DobbyHook(
+        (void *)&CMSDiagnosticTarget,
+        (void *)&CMSDiagnosticReplacement,
+        (void **)&CMSOriginalTarget
+    );
+
+    [self addEvent:[NSString stringWithFormat:
+        @"DOBBY STATUS: %d", status]];
+
+    if (status != 0) {
+        [self addEvent:@"DOBBY HOOK FAILED"];
+        return;
+    }
+
+    self.hookInstalled = YES;
+
+    int after = CMSDiagnosticTarget(5);
+
+    [self addEvent:[NSString stringWithFormat:
+        @"AFTER HOOK: %d", after]];
+
+    [self addEvent:[NSString stringWithFormat:
+        @"HOOK CALLS: %d", CMSHookCalls]];
+
+    if (before == 12 && after == 112 && CMSHookCalls > 0) {
+        [self addEvent:@"DOBBY SELF TEST PASSED"];
+    } else {
+        [self addEvent:@"DOBBY SELF TEST INCONCLUSIVE"];
+    }
 }
 
 - (void)tryShowPanel {
@@ -220,7 +275,7 @@
     UILabel *title = [[UILabel alloc]
         initWithFrame:CGRectMake(12, 8, width - 24, 28)];
 
-    title.text = @"CMSCrystalLogger v4";
+    title.text = @"CMSCrystalLogger v5";
     title.textColor = UIColor.whiteColor;
     title.font = [UIFont boldSystemFontOfSize:16];
     title.userInteractionEnabled = YES;
@@ -261,11 +316,11 @@
     [controller.view addSubview:self.logView];
 
     NSArray *titles =
-        @[@"DIAGNOSE", @"SPIN +1", @"COPY"];
+        @[@"DIAGNOSE", @"DOBBY TEST", @"COPY"];
 
     SEL actions[] = {
         @selector(runDiagnostics),
-        @selector(testSpin),
+        @selector(testDobby),
         @selector(copyLog)
     };
 
@@ -317,17 +372,6 @@
 
     [gesture setTranslation:CGPointZero
                     inView:self.window];
-}
-
-- (void)testSpin {
-    self.spinCount++;
-    self.totalSpins++;
-
-    [self updateCounter];
-
-    [self addEvent:[NSString stringWithFormat:
-        @"TEST SPIN count=%ld",
-        (long)self.spinCount]];
 }
 
 - (void)copyLog {
