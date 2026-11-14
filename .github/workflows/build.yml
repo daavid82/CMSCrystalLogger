@@ -37,7 +37,7 @@ jobs:
 
           find dobby-build -name "libdobby.a"
 
-      - name: Compile CMSCrystalLogger v4
+      - name: Compile CMSCrystalLogger with Dobby
         run: |
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 
@@ -50,8 +50,10 @@ jobs:
             -framework UIKit \
             -framework Foundation \
             -framework CoreGraphics \
+            -lc++ \
             -install_name @rpath/CMSCrystalLogger.dylib \
             CMSCrystalLogger.m \
+            dobby-build/build/Release/libdobby.a \
             -o CMSCrystalLogger.dylib
 
       - name: Verify output
