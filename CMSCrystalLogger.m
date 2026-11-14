@@ -1,7 +1,9 @@
 
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
-#import <QuartzCore/QuartzCore.h>
+#import <CoreGraphics/CoreGraphics.h>
+#import <mach-o/dyld.h>
+#import <dlfcn.h>
 
 @interface CMSLogger : NSObject
 
@@ -10,7 +12,6 @@
 @property (nonatomic, strong) UILabel *counterLabel;
 @property (nonatomic, strong) NSMutableArray<NSString *> *events;
 @property (nonatomic, strong) NSMutableArray<NSNumber *> *history;
-@property (nonatomic, strong) NSMutableArray<NSString *> *targets;
 @property (nonatomic, assign) NSInteger spinCount;
 @property (nonatomic, assign) NSInteger totalSpins;
 @property (nonatomic, assign) NSInteger attackCount;
@@ -27,18 +28,14 @@
 + (instancetype)shared {
     static CMSLogger *logger;
     static dispatch_once_t once;
+
     dispatch_once(&once, ^{
         logger = [CMSLogger new];
         logger.events = [NSMutableArray new];
         logger.history = [NSMutableArray new];
-        logger.targets = [NSMutableArray new];
     });
-    return logger;
-}
 
-- (NSString *)logPath {
-    return [NSTemporaryDirectory()
-        stringByAppendingPathComponent:@"CMSCrystalLogger.log"];
+    return logger;
 }
 
 - (void)addEvent:(NSString *)event {
@@ -46,15 +43,26 @@
         NSDateFormatter *formatter = [NSDateFormatter new];
         formatter.dateFormat = @"HH:mm:ss.SSS";
 
-        NSString *line = [NSString stringWithFormat:@"%@ %@",
-            [formatter stringFromDate:[NSDate date]], event];
+        NSString *line = [NSString stringWithFormat:
+            @"%@ %@",
+            [formatter stringFromDate:[NSDate date]],
+            event];
 
         [self.events addObject:line];
+
+        if (self.events.count > 300) {
+            [self.events removeObjectAtIndex:0];
+        }
 
         NSString *content =
             [self.events componentsJoinedByString:@"\n"];
 
-        [content writeToFile:[self logPath]
+        NSString *path =
+            [NSTemporaryDirectory()
+                stringByAppendingPathComponent:
+                    @"CMSCrystalLogger.log"];
+
+        [content writeToFile:path
                   atomically:YES
                     encoding:NSUTF8StringEncoding
                        error:nil];
@@ -72,7 +80,7 @@
 
 - (void)updateCounter {
     self.counterLabel.text = [NSString stringWithFormat:
-        @"SPIN: %ld   TOTAL: %ld   ATTACK: %ld",
+        @"SPIN: %ld  TOTAL: %ld  ATTACK: %ld",
         (long)self.spinCount,
         (long)self.totalSpins,
         (long)self.attackCount];
@@ -80,10 +88,72 @@
 
 - (void)start {
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self addEvent:@"LOGGER V3 INITIALIZED"];
-        [self addEvent:@"MODE: MANUAL DIAGNOSTIC"];
+        [self addEvent:@"LOGGER V4 INITIALIZED"];
+        [self addEvent:@"MODE: HOOK DIAGNOSTIC"];
         [self tryShowPanel];
     });
+}
+
+- (void)runDiagnostics {
+    [self addEvent:@"DIAGNOSTICS START"];
+
+    BOOL foundUnity = NO;
+
+    uint32_t count = _dyld_image_count();
+
+    for (uint32_t i = 0; i < count; i++) {
+        const char *name = _dyld_get_image_name(i);
+
+        if (!name) continue;
+
+        NSString *imageName =
+            [NSString stringWithUTF8String:name];
+
+        if ([imageName containsString:@"UnityFramework"]) {
+            foundUnity = YES;
+
+            const struct mach_header *header =
+                _dyld_get_image_header(i);
+
+            intptr_t slide = _dyld_get_image_vmaddr_slide(i);
+
+            [self addEvent:@"UNITYFRAMEWORK FOUND"];
+
+            [self addEvent:[NSString stringWithFormat:
+                @"IMAGE HEADER: %p", (void *)header]];
+
+            [self addEvent:[NSString stringWithFormat:
+                @"ASLR SLIDE: 0x%llx",
+                (unsigned long long)(uint64_t)slide]];
+        }
+    }
+
+    if (!foundUnity) {
+        [self addEvent:@"UNITYFRAMEWORK NOT FOUND"];
+    }
+
+    void *substrate = dlsym(
+        RTLD_DEFAULT, "MSHookFunction");
+
+    void *dobby = dlsym(
+        RTLD_DEFAULT, "DobbyHook");
+
+    void *libhooker = dlsym(
+        RTLD_DEFAULT, "LHHookFunctions");
+
+    [self addEvent:[NSString stringWithFormat:
+        @"MSHookFunction: %@",
+        substrate ? @"FOUND" : @"NOT FOUND"]];
+
+    [self addEvent:[NSString stringWithFormat:
+        @"DobbyHook: %@",
+        dobby ? @"FOUND" : @"NOT FOUND"]];
+
+    [self addEvent:[NSString stringWithFormat:
+        @"LHHookFunctions: %@",
+        libhooker ? @"FOUND" : @"NOT FOUND"]];
+
+    [self addEvent:@"DIAGNOSTICS COMPLETE"];
 }
 
 - (void)tryShowPanel {
@@ -95,9 +165,11 @@
 
     for (UIScene *scene in
          UIApplication.sharedApplication.connectedScenes) {
+
         if ([scene isKindOfClass:[UIWindowScene class]] &&
             scene.activationState ==
                 UISceneActivationStateForegroundActive) {
+
             activeScene = (UIWindowScene *)scene;
             break;
         }
@@ -107,17 +179,16 @@
         if (self.attempts < 60) {
             dispatch_after(
                 dispatch_time(DISPATCH_TIME_NOW,
-                    (int64_t)(NSEC_PER_SEC)),
+                    (int64_t)NSEC_PER_SEC),
                 dispatch_get_main_queue(), ^{
                     [self tryShowPanel];
                 });
         } else {
-            [self addEvent:@"ERROR WINDOW NOT FOUND"];
+            [self addEvent:@"WINDOW NOT FOUND"];
         }
         return;
     }
 
-    [self addEvent:@"ACTIVE WINDOW SCENE FOUND"];
     [self createPanelInScene:activeScene];
 }
 
@@ -136,8 +207,10 @@
     UIViewController *controller = [UIViewController new];
 
     controller.view.backgroundColor =
-        [UIColor colorWithRed:0.07 green:0.09
-                        blue:0.13 alpha:0.94];
+        [UIColor colorWithRed:0.07
+                       green:0.09
+                        blue:0.13
+                       alpha:0.94];
 
     controller.view.layer.cornerRadius = 14;
     controller.view.clipsToBounds = YES;
@@ -145,18 +218,20 @@
     self.window.rootViewController = controller;
 
     UILabel *title = [[UILabel alloc]
-        initWithFrame:CGRectMake(12, 8, width - 24, 26)];
+        initWithFrame:CGRectMake(12, 8, width - 24, 28)];
 
-    title.text = @"CMSCrystalLogger v3";
+    title.text = @"CMSCrystalLogger v4";
     title.textColor = UIColor.whiteColor;
     title.font = [UIFont boldSystemFontOfSize:16];
     title.userInteractionEnabled = YES;
+
     [controller.view addSubview:title];
 
     UIPanGestureRecognizer *pan =
         [[UIPanGestureRecognizer alloc]
             initWithTarget:self
                     action:@selector(movePanel:)];
+
     [title addGestureRecognizer:pan];
 
     self.counterLabel = [[UILabel alloc]
@@ -178,16 +253,19 @@
     self.logView.font =
         [UIFont monospacedSystemFontOfSize:11
                                    weight:UIFontWeightRegular];
+
     self.logView.editable = NO;
     self.logView.text =
         [self.events componentsJoinedByString:@"\n"];
 
     [controller.view addSubview:self.logView];
 
-    NSArray *titles = @[@"SPIN +1", @"ATTACK", @"COPY"];
+    NSArray *titles =
+        @[@"DIAGNOSE", @"SPIN +1", @"COPY"];
+
     SEL actions[] = {
+        @selector(runDiagnostics),
         @selector(testSpin),
-        @selector(testAttack),
         @selector(copyLog)
     };
 
@@ -203,14 +281,17 @@
 
         [button setTitle:titles[i]
                forState:UIControlStateNormal];
+
         [button setTitleColor:UIColor.whiteColor
                     forState:UIControlStateNormal];
 
         button.backgroundColor =
             [UIColor colorWithWhite:0.22 alpha:1];
+
         button.layer.cornerRadius = 8;
 
-        [button addTarget:self action:actions[i]
+        [button addTarget:self
+                   action:actions[i]
          forControlEvents:UIControlEventTouchUpInside];
 
         [controller.view addSubview:button];
@@ -220,6 +301,7 @@
     [self.window makeKeyAndVisible];
 
     [self addEvent:@"PANEL VISIBLE"];
+    [self runDiagnostics];
 }
 
 - (void)movePanel:(UIPanGestureRecognizer *)gesture {
@@ -227,8 +309,10 @@
         [gesture translationInView:self.window];
 
     CGRect frame = self.window.frame;
+
     frame.origin.x += translation.x;
     frame.origin.y += translation.y;
+
     self.window.frame = frame;
 
     [gesture setTranslation:CGPointZero
@@ -242,30 +326,14 @@
     [self updateCounter];
 
     [self addEvent:[NSString stringWithFormat:
-        @"TEST SPIN round=%ld total=%ld",
-        (long)self.spinCount,
-        (long)self.totalSpins]];
-}
-
-- (void)testAttack {
-    [self.history addObject:@(self.spinCount)];
-    self.attackCount++;
-
-    [self addEvent:[NSString stringWithFormat:
-        @"TEST ATTACK history=%ld attack=%ld",
-        (long)self.spinCount,
-        (long)self.attackCount]];
-
-    self.spinCount = 0;
-    [self updateCounter];
-    [self addEvent:@"NEW ROUND count=0"];
+        @"TEST SPIN count=%ld",
+        (long)self.spinCount]];
 }
 
 - (void)copyLog {
-    NSString *content =
+    UIPasteboard.generalPasteboard.string =
         [self.events componentsJoinedByString:@"\n"];
 
-    UIPasteboard.generalPasteboard.string = content;
     [self addEvent:@"LOG COPIED"];
 }
 
