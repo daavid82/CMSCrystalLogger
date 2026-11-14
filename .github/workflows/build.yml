@@ -33,11 +33,14 @@ jobs:
             -DCMAKE_SYSTEM_PROCESSOR=arm64 \
             -DDOBBY_GENERATE_SHARED=OFF
 
-          cmake --build dobby-build --config Release --target dobby_static -- CODE_SIGNING_ALLOWED=NO
+          cmake --build dobby-build \
+            --config Release \
+            --target dobby_static -- \
+            CODE_SIGNING_ALLOWED=NO
 
-          find dobby-build -name "libdobby.a"
+          test -f dobby-build/build/Release/libdobby.a
 
-      - name: Compile CMSCrystalLogger with Dobby
+      - name: Compile CMSCrystalLogger v5
         run: |
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 
@@ -46,20 +49,23 @@ jobs:
             -isysroot "$SDK" \
             -miphoneos-version-min=15.0 \
             -fobjc-arc \
+            -O0 \
+            -fno-inline \
             -dynamiclib \
             -framework UIKit \
             -framework Foundation \
             -framework CoreGraphics \
-            -lc++ \
             -install_name @rpath/CMSCrystalLogger.dylib \
             CMSCrystalLogger.m \
-            dobby-build/build/Release/libdobby.a \
+            -Wl,-force_load,dobby-build/build/Release/libdobby.a \
+            -lc++ \
             -o CMSCrystalLogger.dylib
 
       - name: Verify output
         run: |
           file CMSCrystalLogger.dylib
           xcrun dwarfdump --uuid CMSCrystalLogger.dylib
+          xcrun nm CMSCrystalLogger.dylib | grep DobbyHook
 
       - name: Upload dylib
         uses: actions/upload-artifact@v4
