@@ -1,4 +1,4 @@
-CMSCrystalLogger
+Build CMSCrystalLogger.
 
 on:
   workflow_dispatch:
