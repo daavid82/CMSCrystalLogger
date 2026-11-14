@@ -12,6 +12,9 @@
 @property (nonatomic, strong) UILabel *raidLabel;
 @property (nonatomic, strong) NSMutableArray<NSString *> *events;
 
+@property (nonatomic, strong) UIImage *lastImage;
+@property (nonatomic, strong) UIView *imageOverlay;
+
 @property (nonatomic, assign) NSInteger spins;
 @property (nonatomic, assign) NSInteger attacks;
 @property (nonatomic, assign) NSInteger raids;
@@ -96,8 +99,8 @@
 
 - (void)start {
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self addEvent:@"CMSCRYSTALLOGGER V7"];
-        [self addEvent:@"SCREEN TEST MODE"];
+        [self addEvent:@"CMSCRYSTALLOGGER V8"];
+        [self addEvent:@"SCREEN VIEWER MODE"];
         [self addEvent:@"NO DOBBY HOOKS"];
         [self tryShowPanel];
     });
@@ -138,19 +141,19 @@
     [self addEvent:@"DIAGNOSTICS COMPLETE"];
 }
 
-- (void)screenTest {
-    [self addEvent:@"SCREEN TEST START"];
-
+- (UIWindow *)findGameWindow {
     UIWindow *gameWindow = nil;
 
-    for (UIWindowScene *scene in
+    for (UIScene *scene in
          UIApplication.sharedApplication.connectedScenes) {
 
         if (![scene isKindOfClass:[UIWindowScene class]]) {
             continue;
         }
 
-        for (UIWindow *candidate in scene.windows) {
+        UIWindowScene *windowScene = (UIWindowScene *)scene;
+
+        for (UIWindow *candidate in windowScene.windows) {
             if (candidate == self.window) continue;
             if (candidate.hidden) continue;
             if (candidate.bounds.size.width < 100) continue;
@@ -162,12 +165,25 @@
         }
     }
 
+    return gameWindow;
+}
+
+- (void)screenTest {
+    [self addEvent:@"SCREEN TEST START"];
+
+    UIWindow *gameWindow = [self findGameWindow];
+
     if (!gameWindow) {
-        [self addEvent:@"SCREEN TEST: GAME WINDOW NOT FOUND"];
+        [self addEvent:@"GAME WINDOW NOT FOUND"];
         return;
     }
 
     CGSize size = gameWindow.bounds.size;
+
+    if (size.width <= 0 || size.height <= 0) {
+        [self addEvent:@"INVALID WINDOW SIZE"];
+        return;
+    }
 
     [self addEvent:[NSString stringWithFormat:
         @"GAME WINDOW: %.0f x %.0f",
@@ -210,18 +226,106 @@
 
     BOOL saved = [data writeToFile:path atomically:YES];
 
-    if (saved) {
-        [self addEvent:@"SCREEN TEST: IMAGE SAVED"];
-
-        [self addEvent:[NSString stringWithFormat:
-            @"IMAGE BYTES: %lu",
-            (unsigned long)data.length]];
-
-        [self addEvent:@"SCREEN TEST: CAPTURE COMPLETED"];
-        [self addEvent:@"UNITY CONTENT NOT YET VERIFIED"];
-    } else {
+    if (!saved) {
         [self addEvent:@"SCREEN TEST: SAVE FAILED"];
+        return;
     }
+
+    self.lastImage = image;
+
+    [self addEvent:@"SCREEN TEST: IMAGE SAVED"];
+
+    [self addEvent:[NSString stringWithFormat:
+        @"IMAGE BYTES: %lu",
+        (unsigned long)data.length]];
+
+    [self addEvent:@"PRESS VIEW IMAGE"];
+}
+
+- (void)viewImage {
+    if (!self.lastImage) {
+        [self addEvent:@"NO IMAGE - PRESS SCREEN TEST"];
+        return;
+    }
+
+    if (self.imageOverlay) {
+        [self.imageOverlay removeFromSuperview];
+        self.imageOverlay = nil;
+    }
+
+    UIView *parent =
+        self.window.rootViewController.view;
+
+    UIView *overlay =
+        [[UIView alloc] initWithFrame:parent.bounds];
+
+    overlay.autoresizingMask =
+        UIViewAutoresizingFlexibleWidth |
+        UIViewAutoresizingFlexibleHeight;
+
+    overlay.backgroundColor =
+        [UIColor colorWithWhite:0.02 alpha:0.98];
+
+    UIImageView *imageView =
+        [[UIImageView alloc] initWithFrame:
+            CGRectMake(8, 8,
+                overlay.bounds.size.width - 16,
+                overlay.bounds.size.height - 66)];
+
+    imageView.autoresizingMask =
+        UIViewAutoresizingFlexibleWidth |
+        UIViewAutoresizingFlexibleHeight;
+
+    imageView.image = self.lastImage;
+    imageView.contentMode = UIViewContentModeScaleAspectFit;
+    imageView.backgroundColor = UIColor.blackColor;
+
+    [overlay addSubview:imageView];
+
+    UIButton *closeButton =
+        [UIButton buttonWithType:UIButtonTypeSystem];
+
+    closeButton.frame = CGRectMake(
+        12,
+        overlay.bounds.size.height - 50,
+        overlay.bounds.size.width - 24,
+        40);
+
+    closeButton.autoresizingMask =
+        UIViewAutoresizingFlexibleWidth |
+        UIViewAutoresizingFlexibleTopMargin;
+
+    [closeButton setTitle:@"CLOSE IMAGE"
+                forState:UIControlStateNormal];
+
+    [closeButton setTitleColor:UIColor.whiteColor
+                     forState:UIControlStateNormal];
+
+    closeButton.backgroundColor =
+        [UIColor colorWithRed:0.24
+                       green:0.29
+                        blue:0.38
+                       alpha:1];
+
+    closeButton.layer.cornerRadius = 8;
+
+    [closeButton addTarget:self
+                    action:@selector(closeImage)
+          forControlEvents:UIControlEventTouchUpInside];
+
+    [overlay addSubview:closeButton];
+    [parent addSubview:overlay];
+
+    self.imageOverlay = overlay;
+
+    [self addEvent:@"IMAGE VIEW OPENED"];
+}
+
+- (void)closeImage {
+    [self.imageOverlay removeFromSuperview];
+    self.imageOverlay = nil;
+
+    [self addEvent:@"IMAGE VIEW CLOSED"];
 }
 
 - (void)tryShowPanel {
@@ -278,7 +382,7 @@
                 forState:UIControlStateNormal];
 
     button.titleLabel.font =
-        [UIFont boldSystemFontOfSize:12];
+        [UIFont boldSystemFontOfSize:11];
 
     button.backgroundColor =
         [UIColor colorWithWhite:0.22 alpha:1];
@@ -298,7 +402,7 @@
     CGRect screen = scene.coordinateSpace.bounds;
 
     CGFloat width = MIN(350, screen.size.width - 24);
-    CGFloat height = 370;
+    CGFloat height = 410;
 
     self.window =
         [[UIWindow alloc] initWithWindowScene:scene];
@@ -326,7 +430,7 @@
     UILabel *title = [[UILabel alloc]
         initWithFrame:CGRectMake(12, 8, width - 24, 28)];
 
-    title.text = @"CMSCrystalLogger v7 SCREEN";
+    title.text = @"CMSCrystalLogger v8 SCREEN";
     title.textColor = UIColor.whiteColor;
     title.font = [UIFont boldSystemFontOfSize:16];
     title.userInteractionEnabled = YES;
@@ -399,12 +503,12 @@
     };
 
     NSArray *titles3 =
-        @[@"SCREEN TEST", @"COPY", @"RESET"];
+        @[@"SCREEN TEST", @"VIEW IMAGE", @"COPY"];
 
     SEL actions3[] = {
         @selector(screenTest),
-        @selector(copyLog),
-        @selector(resetCounters)
+        @selector(viewImage),
+        @selector(copyLog)
     };
 
     for (NSInteger i = 0; i < 3; i++) {
@@ -425,6 +529,11 @@
                  action:actions3[i]
                  parent:controller.view];
     }
+
+    [self makeButton:@"RESET COUNTERS"
+              frame:CGRectMake(12, 365, width - 24, 34)
+             action:@selector(resetCounters)
+             parent:controller.view];
 
     self.window.hidden = NO;
     [self.window makeKeyAndVisible];
@@ -509,7 +618,7 @@
 
 __attribute__((constructor))
 static void CMSLoggerInitialize(void) {
-    NSLog(@"[CMSCrystalLogger] V7 DYLIB LOADED");
+    NSLog(@"[CMSCrystalLogger] V8 DYLIB LOADED");
 
     dispatch_async(dispatch_get_main_queue(), ^{
         [[CMSLogger shared] start];
