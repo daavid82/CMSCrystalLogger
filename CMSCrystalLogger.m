@@ -1,197 +1,154 @@
 
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
-#import <CoreGraphics/CoreGraphics.h>
+#import <Vision/Vision.h>
 #import <mach-o/dyld.h>
 
 @interface CMSLogger : NSObject
 
-@property (nonatomic, strong) UIWindow *window;
-@property (nonatomic, strong) UITextView *logView;
-@property (nonatomic, strong) UILabel *counterLabel;
-@property (nonatomic, strong) UILabel *raidLabel;
-@property (nonatomic, strong) NSMutableArray<NSString *> *events;
+@property(nonatomic,strong) UIWindow *window;
+@property(nonatomic,strong) UITextView *logView;
+@property(nonatomic,strong) UILabel *statusLabel;
+@property(nonatomic,strong) UILabel *countLabel;
+@property(nonatomic,strong) UILabel *resultLabel;
+@property(nonatomic,strong) NSMutableArray *events;
+@property(nonatomic,strong) NSTimer *timer;
+@property(nonatomic,strong) UIImage *lastImage;
 
-@property (nonatomic, strong) UIImage *lastImage;
-@property (nonatomic, strong) UIView *imageOverlay;
+@property(nonatomic,assign) BOOL autoScan;
+@property(nonatomic,assign) BOOL processing;
+@property(nonatomic,assign) NSInteger scans;
+@property(nonatomic,assign) NSInteger attempts;
+@property(nonatomic,copy) NSString *lastCandidate;
+@property(nonatomic,assign) NSInteger repeatedCandidate;
 
-@property (nonatomic, assign) NSInteger spins;
-@property (nonatomic, assign) NSInteger attacks;
-@property (nonatomic, assign) NSInteger raids;
-@property (nonatomic, assign) NSInteger symbols;
-@property (nonatomic, assign) NSInteger raidStack;
-@property (nonatomic, assign) NSInteger attempts;
+@property(nonatomic,assign) NSInteger spins;
+@property(nonatomic,assign) NSInteger attacks;
+@property(nonatomic,assign) NSInteger points;
+@property(nonatomic,assign) NSInteger steals;
+@property(nonatomic,assign) NSInteger shields;
+@property(nonatomic,assign) NSInteger spinResults;
+@property(nonatomic,assign) NSInteger raidStack;
 
 + (instancetype)shared;
 - (void)start;
-- (void)addEvent:(NSString *)event;
 
 @end
 
 @implementation CMSLogger
 
 + (instancetype)shared {
-    static CMSLogger *logger;
+    static CMSLogger *obj;
     static dispatch_once_t once;
-
     dispatch_once(&once, ^{
-        logger = [CMSLogger new];
-        logger.events = [NSMutableArray new];
+        obj = [CMSLogger new];
+        obj.events = [NSMutableArray new];
+        obj.lastCandidate = @"";
     });
-
-    return logger;
+    return obj;
 }
 
-- (void)addEvent:(NSString *)event {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        NSDateFormatter *formatter = [NSDateFormatter new];
-        formatter.dateFormat = @"HH:mm:ss.SSS";
+- (void)log:(NSString *)message {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self log:message];
+        });
+        return;
+    }
 
-        NSString *line = [NSString stringWithFormat:
-            @"%@ %@",
-            [formatter stringFromDate:[NSDate date]],
-            event];
+    NSDateFormatter *fmt = [NSDateFormatter new];
+    fmt.dateFormat = @"HH:mm:ss";
 
-        [self.events addObject:line];
+    NSString *line = [NSString stringWithFormat:
+        @"%@ %@", [fmt stringFromDate:[NSDate date]],
+        message];
 
-        if (self.events.count > 300) {
-            [self.events removeObjectAtIndex:0];
-        }
+    [self.events addObject:line];
 
-        NSString *content =
-            [self.events componentsJoinedByString:@"\n"];
+    if (self.events.count > 250) {
+        [self.events removeObjectAtIndex:0];
+    }
 
-        NSString *path =
-            [NSTemporaryDirectory()
-                stringByAppendingPathComponent:
-                    @"CMSCrystalLogger.log"];
+    NSString *all =
+        [self.events componentsJoinedByString:@"\n"];
 
-        [content writeToFile:path
-                  atomically:YES
-                    encoding:NSUTF8StringEncoding
-                       error:nil];
+    self.logView.text = all;
 
-        if (self.logView) {
-            self.logView.text = content;
+    if (all.length) {
+        [self.logView scrollRangeToVisible:
+            NSMakeRange(all.length - 1, 1)];
+    }
 
-            if (content.length > 0) {
-                [self.logView scrollRangeToVisible:
-                    NSMakeRange(content.length - 1, 1)];
-            }
-        }
+    [all writeToFile:
+        [NSTemporaryDirectory()
+            stringByAppendingPathComponent:@"CMSLoggerV10.log"]
+        atomically:YES
+        encoding:NSUTF8StringEncoding
+        error:nil];
 
-        NSLog(@"[CMSCrystalLogger] %@", line);
-    });
+    NSLog(@"[CMSLogger] %@", line);
 }
 
-- (void)updateCounters {
-    self.counterLabel.text = [NSString stringWithFormat:
-        @"SPIN: %ld  ATTACK: %ld  RAID: %ld",
-        (long)self.spins,
-        (long)self.attacks,
-        (long)self.raids];
+- (void)refresh {
+    self.statusLabel.text = [NSString stringWithFormat:
+        @"AUTO %@  |  SCANS %ld",
+        self.autoScan ? @"ON" : @"OFF",
+        (long)self.scans];
 
-    self.raidLabel.text = [NSString stringWithFormat:
-        @"STACK: %ld  SYMBOLS: %ld",
-        (long)self.raidStack,
-        (long)self.symbols];
+    self.statusLabel.textColor =
+        self.autoScan ? UIColor.systemGreenColor :
+                        UIColor.systemOrangeColor;
+
+    self.countLabel.text = [NSString stringWithFormat:
+        @"MANUAL SPINS %ld  |  RAID STACK %ld",
+        (long)self.spins, (long)self.raidStack];
 }
 
 - (void)start {
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self addEvent:@"CMSCRYSTALLOGGER V8"];
-        [self addEvent:@"SCREEN VIEWER MODE"];
-        [self addEvent:@"NO DOBBY HOOKS"];
-        [self tryShowPanel];
+        [self log:@"CMSCRYSTALLOGGER V10"];
+        [self log:@"VISION OCR TRACKER"];
+        [self log:@"NO DOBBY / NO HOOKS"];
+        [self showPanel];
     });
 }
 
-- (void)runDiagnostics {
-    [self addEvent:@"DIAGNOSTICS START"];
+- (UIWindow *)gameWindow {
+    UIWindow *best = nil;
 
-    BOOL foundUnity = NO;
-
-    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
-        const char *name = _dyld_get_image_name(i);
-
-        if (!name) continue;
-
-        NSString *imageName =
-            [NSString stringWithUTF8String:name];
-
-        if ([imageName containsString:@"UnityFramework"]) {
-            foundUnity = YES;
-
-            [self addEvent:@"UNITYFRAMEWORK FOUND"];
-
-            [self addEvent:[NSString stringWithFormat:
-                @"ASLR SLIDE: 0x%llx",
-                (unsigned long long)(uint64_t)
-                    _dyld_get_image_vmaddr_slide(i)]];
-
-            break;
-        }
-    }
-
-    if (!foundUnity) {
-        [self addEvent:@"UNITYFRAMEWORK NOT FOUND"];
-    }
-
-    [self addEvent:@"HOOKING DISABLED"];
-    [self addEvent:@"DIAGNOSTICS COMPLETE"];
-}
-
-- (UIWindow *)findGameWindow {
-    UIWindow *gameWindow = nil;
-
-    for (UIScene *scene in
+    for (UIScene *s in
          UIApplication.sharedApplication.connectedScenes) {
 
-        if (![scene isKindOfClass:[UIWindowScene class]]) {
+        if (![s isKindOfClass:[UIWindowScene class]]) {
             continue;
         }
 
-        UIWindowScene *windowScene = (UIWindowScene *)scene;
+        UIWindowScene *scene = (UIWindowScene *)s;
 
-        for (UIWindow *candidate in windowScene.windows) {
-            if (candidate == self.window) continue;
-            if (candidate.hidden) continue;
-            if (candidate.bounds.size.width < 100) continue;
+        for (UIWindow *w in scene.windows) {
+            if (w == self.window || w.hidden) continue;
+            if (w.bounds.size.width < 100) continue;
+            if (w.bounds.size.height < 100) continue;
 
-            if (!gameWindow ||
-                candidate.windowLevel < gameWindow.windowLevel) {
-                gameWindow = candidate;
+            if (!best || w.windowLevel < best.windowLevel) {
+                best = w;
             }
         }
     }
-
-    return gameWindow;
+    return best;
 }
 
-- (void)screenTest {
-    [self addEvent:@"SCREEN TEST START"];
+- (UIImage *)capture {
+    UIWindow *w = [self gameWindow];
+    if (!w) return nil;
 
-    UIWindow *gameWindow = [self findGameWindow];
-
-    if (!gameWindow) {
-        [self addEvent:@"GAME WINDOW NOT FOUND"];
-        return;
-    }
-
-    CGSize size = gameWindow.bounds.size;
-
+    CGSize size = w.bounds.size;
     if (size.width <= 0 || size.height <= 0) {
-        [self addEvent:@"INVALID WINDOW SIZE"];
-        return;
+        return nil;
     }
-
-    [self addEvent:[NSString stringWithFormat:
-        @"GAME WINDOW: %.0f x %.0f",
-        size.width, size.height]];
 
     UIGraphicsImageRendererFormat *format =
         [UIGraphicsImageRendererFormat defaultFormat];
-
     format.scale = 1.0;
     format.opaque = YES;
 
@@ -199,427 +156,445 @@
         [[UIGraphicsImageRenderer alloc]
             initWithSize:size format:format];
 
-    UIImage *image = [renderer imageWithActions:
-        ^(UIGraphicsImageRendererContext *context) {
+    return [renderer imageWithActions:
+        ^(UIGraphicsImageRendererContext *ctx) {
+            [w drawViewHierarchyInRect:
+                CGRectMake(0, 0, size.width, size.height)
+                afterScreenUpdates:NO];
+        }];
+}
 
-        [gameWindow drawViewHierarchyInRect:
-            CGRectMake(0, 0, size.width, size.height)
-            afterScreenUpdates:NO];
-    }];
+- (NSString *)categoryForText:(NSString *)raw {
+    NSString *s = raw.uppercaseString;
 
-    if (!image) {
-        [self addEvent:@"SCREEN TEST: IMAGE FAILED"];
-        return;
-    }
+    if ([s containsString:@"ATTACK"]) return @"ATTACK";
+    if ([s containsString:@"POINT"]) return @"POINT";
+    if ([s containsString:@"STEAL"]) return @"STEAL";
+    if ([s containsString:@"SHIELD"]) return @"SHIELD";
+    if ([s containsString:@"SPINS"]) return @"SPINS";
 
-    NSData *data = UIImagePNGRepresentation(image);
+    return nil;
+}
 
-    if (!data) {
-        [self addEvent:@"SCREEN TEST: PNG FAILED"];
-        return;
-    }
+- (void)scan {
+    if (self.processing) return;
+    self.processing = YES;
 
-    NSString *path =
-        [NSTemporaryDirectory()
-            stringByAppendingPathComponent:
-                @"CMSCrystalScreenTest.png"];
+    UIImage *image = [self capture];
 
-    BOOL saved = [data writeToFile:path atomically:YES];
-
-    if (!saved) {
-        [self addEvent:@"SCREEN TEST: SAVE FAILED"];
+    if (!image || !image.CGImage) {
+        self.processing = NO;
+        [self log:@"CAPTURE FAILED"];
         return;
     }
 
     self.lastImage = image;
+    self.scans++;
+    [self refresh];
 
-    [self addEvent:@"SCREEN TEST: IMAGE SAVED"];
+    CGImageRef cg = CGImageRetain(image.CGImage);
 
-    [self addEvent:[NSString stringWithFormat:
-        @"IMAGE BYTES: %lu",
-        (unsigned long)data.length]];
+    dispatch_async(
+        dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),
+        ^{
+        @autoreleasepool {
+            VNRecognizeTextRequest *request =
+                [VNRecognizeTextRequest new];
 
-    [self addEvent:@"PRESS VIEW IMAGE"];
-}
+            request.recognitionLevel =
+                VNRequestTextRecognitionLevelAccurate;
+            request.usesLanguageCorrection = NO;
+            request.recognitionLanguages = @[@"en-US"];
 
-- (void)viewImage {
-    if (!self.lastImage) {
-        [self addEvent:@"NO IMAGE - PRESS SCREEN TEST"];
-        return;
-    }
+            NSError *error = nil;
 
-    if (self.imageOverlay) {
-        [self.imageOverlay removeFromSuperview];
-        self.imageOverlay = nil;
-    }
+            VNImageRequestHandler *handler =
+                [[VNImageRequestHandler alloc]
+                    initWithCGImage:cg options:@{}];
 
-    UIView *parent =
-        self.window.rootViewController.view;
+            BOOL success =
+                [handler performRequests:@[request]
+                                   error:&error];
 
-    UIView *overlay =
-        [[UIView alloc] initWithFrame:parent.bounds];
+            NSMutableDictionary<NSString *, NSNumber *> *found =
+                [NSMutableDictionary new];
 
-    overlay.autoresizingMask =
-        UIViewAutoresizingFlexibleWidth |
-        UIViewAutoresizingFlexibleHeight;
+            NSMutableArray<NSString *> *rawTexts =
+                [NSMutableArray new];
 
-    overlay.backgroundColor =
-        [UIColor colorWithWhite:0.02 alpha:0.98];
+            if (success) {
+                for (VNRecognizedTextObservation *obs
+                     in request.results) {
 
-    UIImageView *imageView =
-        [[UIImageView alloc] initWithFrame:
-            CGRectMake(8, 8,
-                overlay.bounds.size.width - 16,
-                overlay.bounds.size.height - 66)];
+                    VNRecognizedText *text =
+                        [[obs topCandidates:1] firstObject];
 
-    imageView.autoresizingMask =
-        UIViewAutoresizingFlexibleWidth |
-        UIViewAutoresizingFlexibleHeight;
+                    if (!text) continue;
 
-    imageView.image = self.lastImage;
-    imageView.contentMode = UIViewContentModeScaleAspectFit;
-    imageView.backgroundColor = UIColor.blackColor;
+                    NSString *raw = text.string;
+                    if (!raw.length) continue;
 
-    [overlay addSubview:imageView];
+                    if (rawTexts.count < 20) {
+                        [rawTexts addObject:raw];
+                    }
 
-    UIButton *closeButton =
-        [UIButton buttonWithType:UIButtonTypeSystem];
+                    NSString *category =
+                        [self categoryForText:raw];
 
-    closeButton.frame = CGRectMake(
-        12,
-        overlay.bounds.size.height - 50,
-        overlay.bounds.size.width - 24,
-        40);
+                    if (!category) continue;
 
-    closeButton.autoresizingMask =
-        UIViewAutoresizingFlexibleWidth |
-        UIViewAutoresizingFlexibleTopMargin;
+                    NSNumber *old = found[category];
 
-    [closeButton setTitle:@"CLOSE IMAGE"
-                forState:UIControlStateNormal];
+                    if (!old ||
+                        text.confidence > old.floatValue) {
+                        found[category] =
+                            @(text.confidence);
+                    }
+                }
+            }
 
-    [closeButton setTitleColor:UIColor.whiteColor
-                     forState:UIControlStateNormal];
+            CGImageRelease(cg);
 
-    closeButton.backgroundColor =
-        [UIColor colorWithRed:0.24
-                       green:0.29
-                        blue:0.38
-                       alpha:1];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                self.processing = NO;
 
-    closeButton.layer.cornerRadius = 8;
+                if (!success) {
+                    [self log:[NSString stringWithFormat:
+                        @"OCR ERROR: %@",
+                        error.localizedDescription ?: @"UNKNOWN"]];
+                    return;
+                }
 
-    [closeButton addTarget:self
-                    action:@selector(closeImage)
-          forControlEvents:UIControlEventTouchUpInside];
+                NSArray *categories =
+                    [[found allKeys] sortedArrayUsingSelector:
+                        @selector(compare:)];
 
-    [overlay addSubview:closeButton];
-    [parent addSubview:overlay];
+                if (categories.count == 0) {
+                    self.lastCandidate = @"";
+                    self.repeatedCandidate = 0;
+                    self.resultLabel.text = @"OCR: UNKNOWN";
 
-    self.imageOverlay = overlay;
+                    if (self.scans % 10 == 0) {
+                        [self log:[NSString stringWithFormat:
+                            @"OCR RAW: %@",
+                            [rawTexts componentsJoinedByString:@" | "]]];
+                    }
+                    return;
+                }
 
-    [self addEvent:@"IMAGE VIEW OPENED"];
-}
+                NSMutableArray *parts =
+                    [NSMutableArray new];
 
-- (void)closeImage {
-    [self.imageOverlay removeFromSuperview];
-    self.imageOverlay = nil;
+                for (NSString *category in categories) {
+                    [parts addObject:[NSString stringWithFormat:
+                        @"%@ %.2f",
+                        category,
+                        found[category].floatValue]];
+                }
 
-    [self addEvent:@"IMAGE VIEW CLOSED"];
-}
+                NSString *summary =
+                    [parts componentsJoinedByString:@" | "];
 
-- (void)tryShowPanel {
-    if (self.window) return;
+                self.resultLabel.text =
+                    [NSString stringWithFormat:
+                        @"OCR: %@", summary];
 
-    self.attempts++;
+                // Multiple result words can be visible on
+                // the wheel. They are NOT confirmed events.
+                if (categories.count != 1) {
+                    self.lastCandidate = @"";
+                    self.repeatedCandidate = 0;
 
-    UIWindowScene *activeScene = nil;
+                    if (self.scans % 5 == 0) {
+                        [self log:[NSString stringWithFormat:
+                            @"MULTIPLE LABELS: %@", summary]];
+                    }
+                    return;
+                }
 
-    for (UIScene *scene in
-         UIApplication.sharedApplication.connectedScenes) {
+                NSString *candidate = categories.firstObject;
+                float confidence =
+                    found[candidate].floatValue;
 
-        if ([scene isKindOfClass:[UIWindowScene class]] &&
-            scene.activationState ==
-                UISceneActivationStateForegroundActive) {
+                if (confidence < 0.65f) {
+                    self.lastCandidate = @"";
+                    self.repeatedCandidate = 0;
+                    return;
+                }
 
-            activeScene = (UIWindowScene *)scene;
-            break;
+                if ([candidate isEqualToString:
+                     self.lastCandidate]) {
+                    self.repeatedCandidate++;
+                } else {
+                    self.lastCandidate = candidate;
+                    self.repeatedCandidate = 1;
+                    [self log:[NSString stringWithFormat:
+                        @"OCR CANDIDATE: %@ (%.2f)",
+                        candidate, confidence]];
+                }
+
+                if (self.repeatedCandidate == 2) {
+                    [self log:[NSString stringWithFormat:
+                        @"STABLE TEXT: %@ - NOT CONFIRMED RESULT",
+                        candidate]];
+                }
+            });
         }
+    });
+}
+
+- (void)tick:(NSTimer *)timer {
+    if (self.autoScan) [self scan];
+}
+
+- (void)toggleScan {
+    if (self.autoScan) {
+        self.autoScan = NO;
+        [self.timer invalidate];
+        self.timer = nil;
+        [self log:@"AUTO SCAN STOPPED"];
+    } else {
+        self.autoScan = YES;
+        self.scans = 0;
+        self.lastCandidate = @"";
+        self.repeatedCandidate = 0;
+
+        self.timer =
+            [NSTimer scheduledTimerWithTimeInterval:1.0
+                                             target:self
+                                           selector:@selector(tick:)
+                                           userInfo:nil
+                                            repeats:YES];
+
+        [self log:@"AUTO SCAN STARTED"];
+        [self scan];
     }
-
-    if (!activeScene) {
-        if (self.attempts < 60) {
-            dispatch_after(
-                dispatch_time(DISPATCH_TIME_NOW,
-                    (int64_t)NSEC_PER_SEC),
-                dispatch_get_main_queue(), ^{
-                    [self tryShowPanel];
-                });
-        } else {
-            [self addEvent:@"WINDOW NOT FOUND"];
-        }
-
-        return;
-    }
-
-    [self createPanelInScene:activeScene];
+    [self refresh];
 }
 
-- (UIButton *)makeButton:(NSString *)title
-                  frame:(CGRect)frame
-                 action:(SEL)action
-                 parent:(UIView *)parent {
-
-    UIButton *button =
-        [UIButton buttonWithType:UIButtonTypeSystem];
-
-    button.frame = frame;
-
-    [button setTitle:title
-           forState:UIControlStateNormal];
-
-    [button setTitleColor:UIColor.whiteColor
-                forState:UIControlStateNormal];
-
-    button.titleLabel.font =
-        [UIFont boldSystemFontOfSize:11];
-
-    button.backgroundColor =
-        [UIColor colorWithWhite:0.22 alpha:1];
-
-    button.layer.cornerRadius = 8;
-
-    [button addTarget:self
-               action:action
-     forControlEvents:UIControlEventTouchUpInside];
-
-    [parent addSubview:button];
-
-    return button;
-}
-
-- (void)createPanelInScene:(UIWindowScene *)scene {
-    CGRect screen = scene.coordinateSpace.bounds;
-
-    CGFloat width = MIN(350, screen.size.width - 24);
-    CGFloat height = 410;
-
-    self.window =
-        [[UIWindow alloc] initWithWindowScene:scene];
-
-    self.window.frame =
-        CGRectMake(12, 70, width, height);
-
-    self.window.windowLevel =
-        UIWindowLevelAlert + 1;
-
-    UIViewController *controller =
-        [UIViewController new];
-
-    controller.view.backgroundColor =
-        [UIColor colorWithRed:0.07
-                       green:0.09
-                        blue:0.13
-                       alpha:0.94];
-
-    controller.view.layer.cornerRadius = 14;
-    controller.view.clipsToBounds = YES;
-
-    self.window.rootViewController = controller;
-
-    UILabel *title = [[UILabel alloc]
-        initWithFrame:CGRectMake(12, 8, width - 24, 28)];
-
-    title.text = @"CMSCrystalLogger v8 SCREEN";
-    title.textColor = UIColor.whiteColor;
-    title.font = [UIFont boldSystemFontOfSize:16];
-    title.userInteractionEnabled = YES;
-
-    [controller.view addSubview:title];
-
-    UIPanGestureRecognizer *pan =
-        [[UIPanGestureRecognizer alloc]
-            initWithTarget:self
-                    action:@selector(movePanel:)];
-
-    [title addGestureRecognizer:pan];
-
-    self.counterLabel = [[UILabel alloc]
-        initWithFrame:CGRectMake(12, 38, width - 24, 24)];
-
-    self.counterLabel.textColor = UIColor.whiteColor;
-    self.counterLabel.font =
-        [UIFont monospacedSystemFontOfSize:11
-                                   weight:UIFontWeightBold];
-
-    [controller.view addSubview:self.counterLabel];
-
-    self.raidLabel = [[UILabel alloc]
-        initWithFrame:CGRectMake(12, 62, width - 24, 24)];
-
-    self.raidLabel.textColor = UIColor.systemGreenColor;
-    self.raidLabel.font =
-        [UIFont monospacedSystemFontOfSize:12
-                                   weight:UIFontWeightBold];
-
-    [controller.view addSubview:self.raidLabel];
-
-    [self updateCounters];
-
-    self.logView = [[UITextView alloc]
-        initWithFrame:CGRectMake(10, 92, width - 20, 145)];
-
-    self.logView.backgroundColor = UIColor.clearColor;
-    self.logView.textColor = UIColor.greenColor;
-    self.logView.font =
-        [UIFont monospacedSystemFontOfSize:11
-                                   weight:UIFontWeightRegular];
-
-    self.logView.editable = NO;
-    self.logView.text =
-        [self.events componentsJoinedByString:@"\n"];
-
-    [controller.view addSubview:self.logView];
-
-    CGFloat gap = 6;
-    CGFloat buttonWidth = (width - 36 - gap * 2) / 3;
-
-    NSArray *titles1 =
-        @[@"SPIN +1", @"ATTACK", @"RAID"];
-
-    SEL actions1[] = {
-        @selector(addSpin),
-        @selector(addAttack),
-        @selector(addRaid)
-    };
-
-    NSArray *titles2 =
-        @[@"SYMBOL +1", @"STACK +1", @"STACK -1"];
-
-    SEL actions2[] = {
-        @selector(addSymbol),
-        @selector(addStack),
-        @selector(removeStack)
-    };
-
-    NSArray *titles3 =
-        @[@"SCREEN TEST", @"VIEW IMAGE", @"COPY"];
-
-    SEL actions3[] = {
-        @selector(screenTest),
-        @selector(viewImage),
-        @selector(copyLog)
-    };
-
-    for (NSInteger i = 0; i < 3; i++) {
-        CGFloat x = 12 + i * (buttonWidth + gap);
-
-        [self makeButton:titles1[i]
-                  frame:CGRectMake(x, 245, buttonWidth, 34)
-                 action:actions1[i]
-                 parent:controller.view];
-
-        [self makeButton:titles2[i]
-                  frame:CGRectMake(x, 285, buttonWidth, 34)
-                 action:actions2[i]
-                 parent:controller.view];
-
-        [self makeButton:titles3[i]
-                  frame:CGRectMake(x, 325, buttonWidth, 34)
-                 action:actions3[i]
-                 parent:controller.view];
-    }
-
-    [self makeButton:@"RESET COUNTERS"
-              frame:CGRectMake(12, 365, width - 24, 34)
-             action:@selector(resetCounters)
-             parent:controller.view];
-
-    self.window.hidden = NO;
-    [self.window makeKeyAndVisible];
-
-    [self addEvent:@"PANEL VISIBLE"];
-    [self runDiagnostics];
-}
-
-- (void)movePanel:(UIPanGestureRecognizer *)gesture {
-    CGPoint translation =
-        [gesture translationInView:self.window];
-
-    CGRect frame = self.window.frame;
-
-    frame.origin.x += translation.x;
-    frame.origin.y += translation.y;
-
-    self.window.frame = frame;
-
-    [gesture setTranslation:CGPointZero
-                    inView:self.window];
-}
-
-- (void)addSpin {
+- (void)manualSpin {
     self.spins++;
-    [self updateCounters];
-    [self addEvent:@"SPIN +1"];
+    [self refresh];
+    [self log:@"MANUAL SPIN +1"];
 }
 
-- (void)addAttack {
-    self.attacks++;
-    [self updateCounters];
-    [self addEvent:@"ATTACK +1"];
-}
-
-- (void)addRaid {
-    self.raids++;
-    [self updateCounters];
-    [self addEvent:@"RAID +1"];
-}
-
-- (void)addSymbol {
-    self.symbols++;
-    [self updateCounters];
-    [self addEvent:@"SYMBOL +1"];
-}
-
-- (void)addStack {
+- (void)stackPlus {
     self.raidStack++;
-    [self updateCounters];
-    [self addEvent:@"RAID STACK +1"];
+    [self refresh];
+    [self log:@"MANUAL STACK +1"];
 }
 
-- (void)removeStack {
-    if (self.raidStack > 0) {
-        self.raidStack--;
-    }
-
-    [self updateCounters];
-    [self addEvent:@"RAID STACK -1"];
-}
-
-- (void)resetCounters {
-    self.spins = 0;
-    self.attacks = 0;
-    self.raids = 0;
-    self.symbols = 0;
-    self.raidStack = 0;
-
-    [self updateCounters];
-    [self addEvent:@"COUNTERS RESET"];
+- (void)stackMinus {
+    if (self.raidStack > 0) self.raidStack--;
+    [self refresh];
+    [self log:@"MANUAL STACK -1"];
 }
 
 - (void)copyLog {
     UIPasteboard.generalPasteboard.string =
         [self.events componentsJoinedByString:@"\n"];
+    [self log:@"LOG COPIED"];
+}
 
-    [self addEvent:@"LOG COPIED"];
+- (void)reset {
+    self.spins = 0;
+    self.attacks = 0;
+    self.points = 0;
+    self.steals = 0;
+    self.shields = 0;
+    self.spinResults = 0;
+    self.raidStack = 0;
+    [self refresh];
+    [self log:@"MANUAL COUNTERS RESET"];
+}
+
+- (UIButton *)button:(NSString *)title
+                frame:(CGRect)frame
+               action:(SEL)action
+               parent:(UIView *)parent {
+
+    UIButton *b =
+        [UIButton buttonWithType:UIButtonTypeSystem];
+
+    b.frame = frame;
+    [b setTitle:title forState:UIControlStateNormal];
+    [b setTitleColor:UIColor.whiteColor
+           forState:UIControlStateNormal];
+
+    b.titleLabel.font =
+        [UIFont boldSystemFontOfSize:12];
+
+    b.backgroundColor =
+        [UIColor colorWithWhite:0.22 alpha:1];
+
+    b.layer.cornerRadius = 8;
+
+    [b addTarget:self action:action
+     forControlEvents:UIControlEventTouchUpInside];
+
+    [parent addSubview:b];
+    return b;
+}
+
+- (void)move:(UIPanGestureRecognizer *)pan {
+    CGPoint p = [pan translationInView:self.window];
+    CGRect f = self.window.frame;
+    f.origin.x += p.x;
+    f.origin.y += p.y;
+    self.window.frame = f;
+    [pan setTranslation:CGPointZero inView:self.window];
+}
+
+- (void)showPanel {
+    if (self.window) return;
+
+    UIWindowScene *scene = nil;
+
+    for (UIScene *s in
+         UIApplication.sharedApplication.connectedScenes) {
+        if ([s isKindOfClass:[UIWindowScene class]] &&
+            s.activationState ==
+                UISceneActivationStateForegroundActive) {
+            scene = (UIWindowScene *)s;
+            break;
+        }
+    }
+
+    if (!scene) {
+        if (++self.attempts < 60) {
+            dispatch_after(
+                dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC),
+                dispatch_get_main_queue(), ^{
+                    [self showPanel];
+                });
+        }
+        return;
+    }
+
+    CGFloat width =
+        MIN(350, scene.coordinateSpace.bounds.size.width - 24);
+
+    self.window =
+        [[UIWindow alloc] initWithWindowScene:scene];
+
+    self.window.frame =
+        CGRectMake(12, 70, width, 345);
+
+    self.window.windowLevel = UIWindowLevelAlert + 1;
+
+    UIViewController *vc = [UIViewController new];
+    vc.view.backgroundColor =
+        [UIColor colorWithRed:0.06 green:0.08
+                        blue:0.12 alpha:0.95];
+
+    vc.view.layer.cornerRadius = 12;
+    vc.view.clipsToBounds = YES;
+    self.window.rootViewController = vc;
+
+    UILabel *title =
+        [[UILabel alloc] initWithFrame:
+            CGRectMake(12, 8, width - 24, 28)];
+
+    title.text = @"CMSCrystalLogger v10 OCR";
+    title.textColor = UIColor.whiteColor;
+    title.font =
+        [UIFont boldSystemFontOfSize:16];
+    title.userInteractionEnabled = YES;
+
+    [title addGestureRecognizer:
+        [[UIPanGestureRecognizer alloc]
+            initWithTarget:self action:@selector(move:)]];
+
+    [vc.view addSubview:title];
+
+    self.statusLabel =
+        [[UILabel alloc] initWithFrame:
+            CGRectMake(12, 40, width - 24, 22)];
+
+    self.statusLabel.font =
+        [UIFont monospacedSystemFontOfSize:11
+                                   weight:UIFontWeightBold];
+    [vc.view addSubview:self.statusLabel];
+
+    self.countLabel =
+        [[UILabel alloc] initWithFrame:
+            CGRectMake(12, 64, width - 24, 22)];
+
+    self.countLabel.textColor = UIColor.whiteColor;
+    self.countLabel.font =
+        [UIFont systemFontOfSize:12];
+    [vc.view addSubview:self.countLabel];
+
+    self.resultLabel =
+        [[UILabel alloc] initWithFrame:
+            CGRectMake(12, 88, width - 24, 35)];
+
+    self.resultLabel.text = @"OCR: WAITING";
+    self.resultLabel.textColor =
+        UIColor.systemYellowColor;
+    self.resultLabel.font =
+        [UIFont systemFontOfSize:11];
+    self.resultLabel.numberOfLines = 2;
+    [vc.view addSubview:self.resultLabel];
+
+    self.logView =
+        [[UITextView alloc] initWithFrame:
+            CGRectMake(10, 128, width - 20, 120)];
+
+    self.logView.backgroundColor = UIColor.clearColor;
+    self.logView.textColor = UIColor.greenColor;
+    self.logView.font =
+        [UIFont monospacedSystemFontOfSize:10
+                                   weight:UIFontWeightRegular];
+    self.logView.editable = NO;
+    self.logView.text =
+        [self.events componentsJoinedByString:@"\n"];
+    [vc.view addSubview:self.logView];
+
+    CGFloat gap = 6;
+    CGFloat bw = (width - 36 - gap * 2) / 3;
+
+    [self button:@"AUTO SCAN"
+          frame:CGRectMake(12, 255, bw, 34)
+         action:@selector(toggleScan)
+         parent:vc.view];
+
+    [self button:@"SPIN +1"
+          frame:CGRectMake(18 + bw, 255, bw, 34)
+         action:@selector(manualSpin)
+         parent:vc.view];
+
+    [self button:@"COPY LOG"
+          frame:CGRectMake(24 + 2*bw, 255, bw, 34)
+         action:@selector(copyLog)
+         parent:vc.view];
+
+    [self button:@"STACK +1"
+          frame:CGRectMake(12, 295, bw, 34)
+         action:@selector(stackPlus)
+         parent:vc.view];
+
+    [self button:@"STACK -1"
+          frame:CGRectMake(18 + bw, 295, bw, 34)
+         action:@selector(stackMinus)
+         parent:vc.view];
+
+    [self button:@"RESET"
+          frame:CGRectMake(24 + 2*bw, 295, bw, 34)
+         action:@selector(reset)
+         parent:vc.view];
+
+    self.window.hidden = NO;
+    [self.window makeKeyAndVisible];
+
+    [self refresh];
+    [self log:@"PANEL READY"];
 }
 
 @end
 
 __attribute__((constructor))
-static void CMSLoggerInitialize(void) {
-    NSLog(@"[CMSCrystalLogger] V8 DYLIB LOADED");
-
+static void CMSLoggerInit(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         [[CMSLogger shared] start];
     });
