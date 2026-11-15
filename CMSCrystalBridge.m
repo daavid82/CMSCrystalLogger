@@ -8,8 +8,9 @@
 #import <dispatch/dispatch.h>
 #import <stdlib.h>
 
-// CMSCrystalBridge v9
-// Read-only diagnostics with copy-all button.
+// CMSCrystalBridge v10
+// Read-only diagnostics.
+// No game methods are called or modified.
 
 static const char *const kSymbols[] = {
     "RS_GetTripleHistoryForSymbol",
@@ -22,7 +23,9 @@ static const char *const kSymbols[] = {
 #pragma mark - Pass-through window
 
 @interface CMSBridgeWindow : UIWindow
+
 @property(nonatomic, weak) UIView *panel;
+
 @end
 
 @implementation CMSBridgeWindow
@@ -32,20 +35,24 @@ static const char *const kSymbols[] = {
 
     UIView *panel = self.panel;
 
-    if (!panel || panel.hidden) return nil;
+    if (!panel || panel.hidden) {
+        return nil;
+    }
 
     CGPoint local =
         [panel convertPoint:point fromView:self];
 
-    if (![panel pointInside:local withEvent:event])
+    if (![panel pointInside:local withEvent:event]) {
         return nil;
+    }
 
     UIView *hit =
         [super hitTest:point withEvent:event];
 
     if (hit == self ||
-        hit == self.rootViewController.view)
+        hit == self.rootViewController.view) {
         return nil;
+    }
 
     return hit;
 }
@@ -59,7 +66,7 @@ static const char *const kSymbols[] = {
 
 @property(nonatomic, strong) UITextView *details;
 @property(nonatomic, strong) UIButton *toggle;
-@property(nonatomic, strong) UIButton *copyDataButton;
+@property(nonatomic, strong) UIButton *dataButton;
 @property(nonatomic, strong) UILabel *statusLabel;
 @property(nonatomic, copy) NSString *fullReport;
 @property(nonatomic, assign) BOOL expanded;
@@ -70,133 +77,136 @@ static const char *const kSymbols[] = {
 
 - (instancetype)initWithFrame:(CGRect)frame {
 
-    if ((self = [super initWithFrame:frame])) {
+    self = [super initWithFrame:frame];
 
-        self.backgroundColor =
-            [[UIColor blackColor]
-                colorWithAlphaComponent:0.92];
-
-        self.layer.cornerRadius = 10;
-        self.layer.borderWidth = 1;
-        self.layer.borderColor =
-            UIColor.cyanColor.CGColor;
-
-        self.clipsToBounds = YES;
-        self.expanded = NO;
-        self.fullReport = @"";
-
-        self.toggle =
-            [UIButton buttonWithType:
-                UIButtonTypeSystem];
-
-        self.toggle.frame =
-            CGRectMake(0, 0, 190, 38);
-
-        [self.toggle
-            setTitle:@"CMS Bridge v9 +"
-            forState:UIControlStateNormal];
-
-        [self.toggle
-            setTitleColor:UIColor.whiteColor
-            forState:UIControlStateNormal];
-
-        self.toggle.titleLabel.font =
-            [UIFont boldSystemFontOfSize:13];
-
-        [self.toggle
-            addTarget:self
-            action:@selector(togglePanel)
-            forControlEvents:
-                UIControlEventTouchUpInside];
-
-        [self addSubview:self.toggle];
-
-        self.details =
-            [[UITextView alloc]
-                initWithFrame:
-                    CGRectMake(8, 42, 308, 225)];
-
-        self.details.backgroundColor =
-            UIColor.clearColor;
-
-        self.details.textColor =
-            UIColor.whiteColor;
-
-        self.details.font =
-            [UIFont monospacedSystemFontOfSize:10
-                weight:UIFontWeightRegular];
-
-        self.details.editable = NO;
-        self.details.selectable = YES;
-        self.details.scrollEnabled = YES;
-        self.details.hidden = YES;
-
-        [self addSubview:self.details];
-
-        self.copyDataButton =
-            [UIButton buttonWithType:
-                UIButtonTypeSystem];
-
-        self.copyDataButton.frame =
-            CGRectMake(12, 275, 300, 42);
-
-        self.copyDataButton.backgroundColor =
-            [UIColor colorWithRed:0.10
-                            green:0.55
-                             blue:0.25
-                            alpha:1.0];
-
-        self.copyDataButton.layer.cornerRadius = 8;
-
-        [self.copyDataButton
-            setTitle:@"KOPIERA ALL DATA"
-            forState:UIControlStateNormal];
-
-        [self.copyDataButton
-            setTitleColor:UIColor.whiteColor
-            forState:UIControlStateNormal];
-
-        self.copyDataButton.titleLabel.font =
-            [UIFont boldSystemFontOfSize:14];
-
-        [self.copyDataButton
-            addTarget:self
-            action:@selector(copyAllData)
-            forControlEvents:
-                UIControlEventTouchUpInside];
-
-        self.copyDataButton.hidden = YES;
-
-        [self addSubview:self.copyDataButton];
-
-        self.statusLabel =
-            [[UILabel alloc]
-                initWithFrame:
-                    CGRectMake(12, 320, 300, 18)];
-
-        self.statusLabel.textColor =
-            UIColor.whiteColor;
-
-        self.statusLabel.font =
-            [UIFont systemFontOfSize:11];
-
-        self.statusLabel.textAlignment =
-            NSTextAlignmentCenter;
-
-        self.statusLabel.hidden = YES;
-
-        [self addSubview:self.statusLabel];
-
-        UIPanGestureRecognizer *pan =
-            [[UIPanGestureRecognizer alloc]
-                initWithTarget:self
-                action:@selector(drag:)];
-
-        pan.delegate = self;
-        pan.cancelsTouchesInView = NO;
-
-        [self addGestureRecognizer:pan];
+    if (!self) {
+        return nil;
     }
+
+    self.backgroundColor =
+        [[UIColor blackColor]
+            colorWithAlphaComponent:0.92];
+
+    self.layer.cornerRadius = 10;
+    self.layer.borderWidth = 1;
+    self.layer.borderColor =
+        UIColor.cyanColor.CGColor;
+
+    self.clipsToBounds = YES;
+    self.expanded = NO;
+    self.fullReport = @"";
+
+    self.toggle =
+        [UIButton buttonWithType:
+            UIButtonTypeSystem];
+
+    self.toggle.frame =
+        CGRectMake(0, 0, 190, 38);
+
+    [self.toggle
+        setTitle:@"CMS Bridge v10 +"
+        forState:UIControlStateNormal];
+
+    [self.toggle
+        setTitleColor:UIColor.whiteColor
+        forState:UIControlStateNormal];
+
+    self.toggle.titleLabel.font =
+        [UIFont boldSystemFontOfSize:13];
+
+    [self.toggle
+        addTarget:self
+        action:@selector(togglePanel)
+        forControlEvents:
+            UIControlEventTouchUpInside];
+
+    [self addSubview:self.toggle];
+
+    self.details =
+        [[UITextView alloc]
+            initWithFrame:
+                CGRectMake(8, 42, 308, 225)];
+
+    self.details.backgroundColor =
+        UIColor.clearColor;
+
+    self.details.textColor =
+        UIColor.whiteColor;
+
+    self.details.font =
+        [UIFont monospacedSystemFontOfSize:10
+            weight:UIFontWeightRegular];
+
+    self.details.editable = NO;
+    self.details.selectable = YES;
+    self.details.scrollEnabled = YES;
+    self.details.hidden = YES;
+
+    [self addSubview:self.details];
+
+    self.dataButton =
+        [UIButton buttonWithType:
+            UIButtonTypeSystem];
+
+    self.dataButton.frame =
+        CGRectMake(12, 275, 300, 42);
+
+    self.dataButton.backgroundColor =
+        [UIColor colorWithRed:0.10
+                        green:0.55
+                         blue:0.25
+                        alpha:1.0];
+
+    self.dataButton.layer.cornerRadius = 8;
+
+    [self.dataButton
+        setTitle:@"KOPIERA ALL DATA"
+        forState:UIControlStateNormal];
+
+    [self.dataButton
+        setTitleColor:UIColor.whiteColor
+        forState:UIControlStateNormal];
+
+    self.dataButton.titleLabel.font =
+        [UIFont boldSystemFontOfSize:14];
+
+    [self.dataButton
+        addTarget:self
+        action:@selector(copyAllData)
+        forControlEvents:
+            UIControlEventTouchUpInside];
+
+    self.dataButton.hidden = YES;
+
+    [self addSubview:self.dataButton];
+
+    self.statusLabel =
+        [[UILabel alloc]
+            initWithFrame:
+                CGRectMake(12, 320, 300, 18)];
+
+    self.statusLabel.textColor =
+        UIColor.whiteColor;
+
+    self.statusLabel.font =
+        [UIFont systemFontOfSize:11];
+
+    self.statusLabel.textAlignment =
+        NSTextAlignmentCenter;
+
+    self.statusLabel.hidden = YES;
+
+    [self addSubview:self.statusLabel];
+
+    UIPanGestureRecognizer *pan =
+        [[UIPanGestureRecognizer alloc]
+            initWithTarget:self
+            action:@selector(drag:)];
+
+    pan.delegate = self;
+    pan.cancelsTouchesInView = NO;
+
+    [self addGestureRecognizer:pan];
 
     return self;
 }
@@ -234,14 +244,14 @@ static const char *const kSymbols[] = {
     self.frame = frame;
 
     self.details.hidden = !self.expanded;
-    self.copyDataButton.hidden = !self.expanded;
+    self.dataButton.hidden = !self.expanded;
     self.statusLabel.hidden = !self.expanded;
 
     [self.toggle
         setTitle:
             self.expanded
-                ? @"CMS Bridge v9 -"
-                : @"CMS Bridge v9 +"
+                ? @"CMS Bridge v10 -"
+                : @"CMS Bridge v10 +"
         forState:UIControlStateNormal];
 }
 
@@ -254,21 +264,24 @@ static const char *const kSymbols[] = {
         return;
     }
 
-    [UIPasteboard generalPasteboard].string = report;
+    [UIPasteboard generalPasteboard].string =
+        report;
 
     self.statusLabel.text =
         [NSString stringWithFormat:
             @"Kopierat! %lu tecken",
             (unsigned long)report.length];
 
-    [self.copyDataButton
+    [self.dataButton
         setTitle:@"KOPIERAT!"
         forState:UIControlStateNormal];
 }
 
 - (void)drag:(UIPanGestureRecognizer *)gesture {
 
-    if (!self.superview) return;
+    if (!self.superview) {
+        return;
+    }
 
     CGPoint delta =
         [gesture translationInView:self.superview];
@@ -341,12 +354,16 @@ static UIWindowScene *CMSForegroundScene(void) {
 
 static void CMSSetupPanel(void) {
 
-    if (gPanel) return;
+    if (gPanel) {
+        return;
+    }
 
     UIWindowScene *scene =
         CMSForegroundScene();
 
-    if (!scene) return;
+    if (!scene) {
+        return;
+    }
 
     gWindow =
         [[CMSBridgeWindow alloc]
@@ -381,7 +398,9 @@ static void CMSSetupPanel(void) {
 
 static NSString *CMSString(const char *value) {
 
-    if (!value) return @"?";
+    if (!value) {
+        return @"?";
+    }
 
     NSString *result =
         [NSString stringWithUTF8String:value];
@@ -408,8 +427,9 @@ static BOOL CMSInterestingName(NSString *name) {
 
     for (NSString *term in terms) {
 
-        if ([lower containsString:term])
+        if ([lower containsString:term]) {
             return YES;
+        }
     }
 
     return NO;
@@ -492,8 +512,9 @@ static void CMSInspectMethods(
             NSStringFromSelector(
                 method_getName(method));
 
-        if (!CMSInterestingName(name))
+        if (!CMSInterestingName(name)) {
             continue;
+        }
 
         matches++;
 
@@ -626,7 +647,7 @@ static void CMSInspect(void) {
 
     NSMutableString *report =
         [NSMutableString stringWithString:
-            @"CMSCrystalBridge v9\n"
+            @"CMSCrystalBridge v10\n"
              "READ-ONLY DIAGNOSTICS\n\n"];
 
     [report appendFormat:
@@ -662,7 +683,7 @@ static void CMSInspect(void) {
          "Raid stack: ej ansluten\n"
          "AutoSpeed: oförändrad\n"];
 
-    NSLog(@"[CMSBridgeV9] %@", report);
+    NSLog(@"[CMSBridgeV10] %@", report);
 
     if (gPanel) {
 
@@ -673,7 +694,7 @@ static void CMSInspect(void) {
             setContentOffset:CGPointZero
             animated:NO];
 
-        [gPanel.copyDataButton
+        [gPanel.dataButton
             setTitle:@"KOPIERA ALL DATA"
             forState:UIControlStateNormal];
 
@@ -685,7 +706,7 @@ static void CMSInspect(void) {
 #pragma mark - Startup
 
 __attribute__((constructor))
-static void CMSBridgeV9Start(void) {
+static void CMSBridgeV10Start(void) {
 
     dispatch_async(
         dispatch_get_main_queue(), ^{
