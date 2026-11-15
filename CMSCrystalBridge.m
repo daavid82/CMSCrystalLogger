@@ -5,14 +5,53 @@
 #import <dispatch/dispatch.h>
 #import <string.h>
 
-#pragma mark - CMSCrystalBridge v18
+#pragma mark - CMSCrystalBridge v19
 
-static const NSTimeInterval kRefresh = 0.1;
+// 10 updates per second.
+static const NSTimeInterval kCMSRefresh = 0.1;
 
-// 0.20 = 80% transparent
-static const CGFloat kPanelOpacity = 0.20;
+// Black background with 35% opacity.
+static const CGFloat kCMSBackgroundOpacity = 0.35;
 
-#pragma mark - Touch-through window
+// Only this top strip captures touches.
+static const CGFloat kCMSDragHeight = 34.0;
+
+#pragma mark - Text styling
+
+static void CMSStyleLabel(UILabel *label,
+                          CGFloat size,
+                          BOOL bold,
+                          UIColor *color) {
+
+    label.textColor = color;
+
+    label.font = bold
+        ? [UIFont boldSystemFontOfSize:size]
+        : [UIFont systemFontOfSize:size];
+
+    // Dark shadow makes text readable over the wheel.
+    label.layer.shadowColor =
+        UIColor.blackColor.CGColor;
+
+    label.layer.shadowOpacity = 1.0;
+    label.layer.shadowRadius = 2.0;
+    label.layer.shadowOffset =
+        CGSizeMake(0, 1);
+
+    label.layer.masksToBounds = NO;
+
+    label.backgroundColor =
+        UIColor.clearColor;
+}
+
+static void CMSSetText(UILabel *label,
+                       NSString *text) {
+
+    if (![label.text isEqualToString:text])
+        label.text = text;
+}
+
+#pragma mark - Pass-through window
 
 @interface CMSBridgeWindow : UIWindow
 @property(nonatomic,weak) UIView *panel;
@@ -31,14 +70,18 @@ static const CGFloat kPanelOpacity = 0.20;
     CGPoint local =
         [panel convertPoint:point fromView:self];
 
-    // Only the top 32 points capture touches.
-    // All other touches pass through to the game.
+    // Outside the panel: pass through.
     if (local.x < 0 ||
         local.x > panel.bounds.size.width ||
         local.y < 0 ||
-        local.y > 32)
+        local.y > panel.bounds.size.height)
         return nil;
 
+    // Counter area: pass through to the game.
+    if (local.y > kCMSDragHeight)
+        return nil;
+
+    // Header: allow dragging.
     return [super hitTest:point withEvent:event];
 }
 
@@ -46,88 +89,104 @@ static const CGFloat kPanelOpacity = 0.20;
 
 #pragma mark - Logger access
 
-static id CMSGetObject(id obj, NSString *name) {
+static id CMSGetObject(id object,
+                       NSString *name) {
 
-    if (!obj) return nil;
-
-    SEL sel = NSSelectorFromString(name);
-
-    NSMethodSignature *sig =
-        [obj methodSignatureForSelector:sel];
-
-    if (!sig || sig.numberOfArguments != 2 ||
-        strcmp(sig.methodReturnType, "@") != 0)
+    if (!object)
         return nil;
 
-    IMP imp = [obj methodForSelector:sel];
-    if (!imp) return nil;
+    SEL selector =
+        NSSelectorFromString(name);
 
-    id (*fn)(id, SEL) =
+    NSMethodSignature *signature =
+        [object methodSignatureForSelector:selector];
+
+    if (!signature ||
+        signature.numberOfArguments != 2 ||
+        strcmp(signature.methodReturnType, "@") != 0)
+        return nil;
+
+    IMP imp =
+        [object methodForSelector:selector];
+
+    if (!imp)
+        return nil;
+
+    id (*getter)(id, SEL) =
         (id (*)(id, SEL))imp;
 
-    return fn(obj, sel);
+    return getter(object, selector);
 }
 
-static BOOL CMSGetInteger(
-    id obj,
-    NSString *name,
-    long long *out) {
+static BOOL CMSGetInteger(id object,
+                          NSString *name,
+                          long long *output) {
 
-    if (!obj || !out) return NO;
-
-    SEL sel = NSSelectorFromString(name);
-
-    NSMethodSignature *sig =
-        [obj methodSignatureForSelector:sel];
-
-    if (!sig || sig.numberOfArguments != 2)
+    if (!object || !output)
         return NO;
 
-    const char *type = sig.methodReturnType;
+    SEL selector =
+        NSSelectorFromString(name);
+
+    NSMethodSignature *signature =
+        [object methodSignatureForSelector:selector];
+
+    if (!signature ||
+        signature.numberOfArguments != 2)
+        return NO;
+
+    const char *type =
+        signature.methodReturnType;
 
     if (!type ||
         (strcmp(type, "q") != 0 &&
          strcmp(type, "Q") != 0))
         return NO;
 
-    IMP imp = [obj methodForSelector:sel];
-    if (!imp) return NO;
+    IMP imp =
+        [object methodForSelector:selector];
 
-    long long (*fn)(id, SEL) =
+    if (!imp)
+        return NO;
+
+    long long (*getter)(id, SEL) =
         (long long (*)(id, SEL))imp;
 
-    *out = fn(obj, sel);
+    *output = getter(object, selector);
 
     return YES;
 }
 
 static id CMSLogger(void) {
 
-    Class cls = objc_getClass("CMSCrystalLogger");
+    Class cls =
+        objc_getClass("CMSCrystalLogger");
 
-    return cls
-        ? CMSGetObject(cls, @"shared")
-        : nil;
+    if (!cls)
+        return nil;
+
+    return CMSGetObject(cls, @"shared");
 }
 
-static BOOL CMSReadCount(
-    NSDictionary *counts,
-    NSString *key,
-    long long *out) {
+static BOOL CMSReadCount(NSDictionary *counts,
+                         NSString *key,
+                         long long *output) {
 
-    if (!counts || !out) return NO;
+    if (!counts || !output)
+        return NO;
 
     id value = counts[key];
 
     if (!value) {
-        *out = 0;
+        *output = 0;
         return YES;
     }
 
     if (![value isKindOfClass:NSNumber.class])
         return NO;
 
-    *out = [value longLongValue];
+    *output = [value longLongValue];
+
     return YES;
 }
 
@@ -139,16 +198,19 @@ static BOOL CMSReadCount(
 @property(nonatomic,copy) NSString *key;
 
 @property(nonatomic,strong) UIColor *color;
-@property(nonatomic,strong) NSArray<UILabel *> *cells;
+@property(nonatomic,strong) UILabel *nameLabel;
+
+@property(nonatomic,strong)
+NSArray<UILabel *> *cells;
+
+@property(nonatomic,strong)
+NSMutableArray<NSNumber *> *history;
 
 @property(nonatomic,assign) long long observedCount;
 @property(nonatomic,assign) long long lastSpin;
 
 @property(nonatomic,assign) BOOL hasBaseline;
 @property(nonatomic,assign) BOOL hasOccurrence;
-
-@property(nonatomic,strong)
-NSMutableArray<NSNumber *> *history;
 
 @end
 
@@ -160,18 +222,20 @@ static CMSSymbolState *CMSMakeSymbol(
     NSString *key,
     UIColor *color) {
 
-    CMSSymbolState *s = [CMSSymbolState new];
+    CMSSymbolState *symbol =
+        [CMSSymbolState new];
 
-    s.name = name;
-    s.key = key;
-    s.color = color;
+    symbol.name = name;
+    symbol.key = key;
+    symbol.color = color;
 
-    s.history = [NSMutableArray array];
+    symbol.history =
+        [NSMutableArray array];
 
-    return s;
+    return symbol;
 }
 
-#pragma mark - Panel
+#pragma mark - Main panel
 
 @interface CMSBridgePanel : UIView
 <UIGestureRecognizerDelegate>
@@ -189,8 +253,8 @@ NSArray<CMSSymbolState *> *symbols;
 
 @end
 
-static CMSBridgeWindow *gWindow = nil;
-static CMSBridgePanel *gPanel = nil;
+static CMSBridgeWindow *gBridgeWindow = nil;
+static CMSBridgePanel *gBridgePanel = nil;
 
 @implementation CMSBridgePanel
 
@@ -198,103 +262,141 @@ static CMSBridgePanel *gPanel = nil;
 
     self = [super initWithFrame:frame];
 
-    if (!self) return nil;
+    if (!self)
+        return nil;
 
-    // Transparent background, readable text.
     self.backgroundColor =
         [[UIColor blackColor]
-            colorWithAlphaComponent:kPanelOpacity];
+            colorWithAlphaComponent:
+                kCMSBackgroundOpacity];
 
     self.layer.cornerRadius = 12;
-    self.layer.borderWidth = 1;
+    self.layer.borderWidth = 1.2;
 
     self.layer.borderColor =
         [[UIColor cyanColor]
-            colorWithAlphaComponent:0.65].CGColor;
+            colorWithAlphaComponent:0.9].CGColor;
 
-    self.clipsToBounds = YES;
+    self.clipsToBounds = NO;
 
     self.symbols = @[
         CMSMakeSymbol(
-            @"ATTACK", @"ATTACK",
-            UIColor.systemRedColor),
+            @"ATTACK",
+            @"ATTACK",
+            [UIColor colorWithRed:1.0
+                           green:0.45
+                            blue:0.45
+                           alpha:1.0]),
 
         CMSMakeSymbol(
-            @"STEAL", @"STEAL",
-            UIColor.systemOrangeColor),
+            @"STEAL",
+            @"STEAL",
+            [UIColor colorWithRed:1.0
+                           green:0.70
+                            blue:0.30
+                           alpha:1.0]),
 
         CMSMakeSymbol(
-            @"POINT", @"POINT",
-            UIColor.systemYellowColor),
+            @"POINT",
+            @"POINT",
+            [UIColor colorWithRed:1.0
+                           green:0.94
+                            blue:0.30
+                           alpha:1.0]),
 
         CMSMakeSymbol(
-            @"FLASKA", @"GREEN_BOTTLE",
-            UIColor.systemGreenColor)
+            @"FLASKA",
+            @"GREEN_BOTTLE",
+            [UIColor colorWithRed:0.40
+                           green:1.0
+                            blue:0.50
+                           alpha:1.0])
     ];
+
+    // Header.
 
     UILabel *title =
         [[UILabel alloc]
             initWithFrame:
-                CGRectMake(10, 8, 300, 24)];
+                CGRectMake(12, 7, 280, 24)];
 
-    title.text = @"CMS BRIDGE v18";
-    title.textColor = UIColor.cyanColor;
+    title.text = @"CMS BRIDGE v19";
 
-    title.font =
-        [UIFont boldSystemFontOfSize:14];
+    CMSStyleLabel(
+        title,
+        15,
+        YES,
+        UIColor.cyanColor);
 
     [self addSubview:title];
+
+    // Column headers.
 
     NSArray *headers =
         @[@"SYMBOL", @"NU", @"FÖRRA", @"-2", @"-3"];
 
-    CGFloat x[] = {10, 119, 167, 224, 271};
-    CGFloat w[] = {103, 43, 51, 41, 39};
+    CGFloat x[] = {
+        12, 119, 167, 224, 271
+    };
+
+    CGFloat widths[] = {
+        102, 43, 51, 41, 39
+    };
 
     for (NSUInteger j = 0; j < 5; j++) {
 
-        UILabel *label =
+        UILabel *header =
             [[UILabel alloc]
                 initWithFrame:
-                    CGRectMake(x[j], 39, w[j], 18)];
+                    CGRectMake(
+                        x[j], 40,
+                        widths[j], 20)];
 
-        label.text = headers[j];
+        header.text = headers[j];
 
-        label.font =
-            [UIFont systemFontOfSize:10];
+        CMSStyleLabel(
+            header,
+            11,
+            YES,
+            UIColor.whiteColor);
 
-        label.textColor = UIColor.whiteColor;
-
-        label.textAlignment =
+        header.textAlignment =
             j == 0
                 ? NSTextAlignmentLeft
                 : NSTextAlignmentRight;
 
-        [self addSubview:label];
+        [self addSubview:header];
     }
+
+    // Four independent symbol rows.
 
     for (NSUInteger i = 0;
          i < self.symbols.count;
          i++) {
 
-        CMSSymbolState *s = self.symbols[i];
+        CMSSymbolState *symbol =
+            self.symbols[i];
 
-        CGFloat y = 62 + i * 38;
+        CGFloat y = 67 + i * 40;
 
         UILabel *name =
             [[UILabel alloc]
                 initWithFrame:
-                    CGRectMake(10, y, 103, 28)];
+                    CGRectMake(12, y, 102, 28)];
 
-        name.text = s.name;
-        name.textColor = s.color;
+        name.text = symbol.name;
 
-        name.font =
-            [UIFont boldSystemFontOfSize:12];
+        CMSStyleLabel(
+            name,
+            13,
+            YES,
+            symbol.color);
+
+        symbol.nameLabel = name;
 
         [self addSubview:name];
 
-        NSMutableArray *cells =
+        NSMutableArray<UILabel *> *cells =
             [NSMutableArray array];
 
         for (NSUInteger j = 1; j < 5; j++) {
@@ -302,74 +404,97 @@ static CMSBridgePanel *gPanel = nil;
             UILabel *cell =
                 [[UILabel alloc]
                     initWithFrame:
-                        CGRectMake(x[j], y, w[j], 28)];
+                        CGRectMake(
+                            x[j],
+                            y,
+                            widths[j],
+                            28)];
 
             cell.text = @"—";
 
             cell.textAlignment =
                 NSTextAlignmentRight;
 
-            cell.textColor =
+            UIColor *color =
                 j == 1
                     ? UIColor.whiteColor
-                    : UIColor.lightGrayColor;
+                    : [UIColor colorWithWhite:0.92
+                                       alpha:1.0];
+
+            CMSStyleLabel(
+                cell,
+                j == 1 ? 19 : 14,
+                j == 1,
+                color);
 
             cell.font =
                 [UIFont monospacedDigitSystemFontOfSize:
-                    j == 1 ? 17 : 13
+                    j == 1 ? 19 : 14
                     weight:
                     j == 1
                         ? UIFontWeightBold
-                        : UIFontWeightRegular];
+                        : UIFontWeightSemibold];
 
             [self addSubview:cell];
-
             [cells addObject:cell];
         }
 
-        s.cells = [cells copy];
+        symbol.cells = [cells copy];
     }
 
-    UIView *line =
+    // Separator.
+
+    UIView *separator =
         [[UIView alloc]
             initWithFrame:
-                CGRectMake(10, 218, 300, 1)];
+                CGRectMake(12, 229, 298, 1)];
 
-    line.backgroundColor =
+    separator.backgroundColor =
         [[UIColor whiteColor]
-            colorWithAlphaComponent:0.35];
+            colorWithAlphaComponent:0.65];
 
-    [self addSubview:line];
+    [self addSubview:separator];
+
+    // Spin count.
 
     self.spinLabel =
         [[UILabel alloc]
             initWithFrame:
-                CGRectMake(10, 224, 300, 23)];
+                CGRectMake(12, 235, 298, 25)];
 
     self.spinLabel.text = @"Spins ~—";
-    self.spinLabel.textColor = UIColor.cyanColor;
+
+    CMSStyleLabel(
+        self.spinLabel,
+        15,
+        YES,
+        UIColor.cyanColor);
 
     self.spinLabel.font =
-        [UIFont monospacedDigitSystemFontOfSize:13
-                                        weight:UIFontWeightMedium];
+        [UIFont monospacedDigitSystemFontOfSize:15
+                                        weight:UIFontWeightBold];
 
     [self addSubview:self.spinLabel];
+
+    // Status.
 
     self.statusLabel =
         [[UILabel alloc]
             initWithFrame:
-                CGRectMake(10, 251, 300, 20)];
+                CGRectMake(12, 265, 298, 20)];
 
     self.statusLabel.text =
         @"Väntar på Logger";
 
-    self.statusLabel.textColor =
-        UIColor.whiteColor;
-
-    self.statusLabel.font =
-        [UIFont systemFontOfSize:10];
+    CMSStyleLabel(
+        self.statusLabel,
+        11,
+        YES,
+        UIColor.whiteColor);
 
     [self addSubview:self.statusLabel];
+
+    // Dragging is limited to the header.
 
     UIPanGestureRecognizer *pan =
         [[UIPanGestureRecognizer alloc]
@@ -388,33 +513,39 @@ static CMSBridgePanel *gPanel = nil;
 
 - (void)drag:(UIPanGestureRecognizer *)gesture {
 
-    if (!self.superview) return;
+    if (!self.superview)
+        return;
 
     CGPoint delta =
         [gesture translationInView:self.superview];
 
-    CGRect f = self.frame;
+    CGRect frame = self.frame;
 
-    CGFloat maxX = MAX(
-        0,
-        self.superview.bounds.size.width -
-        f.size.width);
+    CGFloat maxX =
+        MAX(0,
+            self.superview.bounds.size.width -
+            frame.size.width);
 
-    CGFloat maxY = MAX(
-        0,
-        self.superview.bounds.size.height -
-        f.size.height);
+    CGFloat maxY =
+        MAX(0,
+            self.superview.bounds.size.height -
+            frame.size.height);
 
-    f.origin.x =
-        MAX(0, MIN(maxX, f.origin.x + delta.x));
+    frame.origin.x =
+        MAX(0,
+            MIN(maxX,
+                frame.origin.x + delta.x));
 
-    f.origin.y =
-        MAX(0, MIN(maxY, f.origin.y + delta.y));
+    frame.origin.y =
+        MAX(0,
+            MIN(maxY,
+                frame.origin.y + delta.y));
 
-    self.frame = f;
+    self.frame = frame;
 
-    [gesture setTranslation:CGPointZero
-                    inView:self.superview];
+    [gesture setTranslation:
+        CGPointZero
+        inView:self.superview];
 }
 
 - (BOOL)gestureRecognizerShouldBegin:
@@ -423,52 +554,71 @@ static CMSBridgePanel *gPanel = nil;
     if ([gesture
             isKindOfClass:UIPanGestureRecognizer.class]) {
 
-        CGPoint p =
+        CGPoint point =
             [gesture locationInView:self];
 
-        return p.y <= 32;
+        return point.y <= kCMSDragHeight;
     }
 
     return YES;
 }
 
-#pragma mark - Refresh
+#pragma mark - Refresh counters
 
 - (void)refresh {
 
     id logger = CMSLogger();
 
     if (!logger) {
-        self.statusLabel.text = @"Logger saknas";
+
+        CMSSetText(
+            self.statusLabel,
+            @"Logger saknas");
+
         return;
     }
 
-    id obj = CMSGetObject(logger, @"counts");
+    id countsObject =
+        CMSGetObject(logger, @"counts");
 
-    if (![obj isKindOfClass:NSDictionary.class]) {
-        self.statusLabel.text =
-            @"Väntar på symboldata";
+    if (![countsObject
+            isKindOfClass:NSDictionary.class]) {
+
+        CMSSetText(
+            self.statusLabel,
+            @"Väntar på symboldata");
+
         return;
     }
 
     NSDictionary *counts =
-        [(NSDictionary *)obj copy];
+        [(NSDictionary *)countsObject copy];
+
+    // Read the existing Logger spin estimate.
 
     long long spins = 0;
 
-    BOOL valid =
+    BOOL spinValid =
         CMSGetInteger(
-            logger, @"estimatedSpins", &spins)
-        && spins >= 0;
+            logger,
+            @"estimatedSpins",
+            &spins) && spins >= 0;
 
-    if (valid) {
+    if (spinValid) {
 
         if (self.hasSpin &&
             spins < self.currentSpin) {
 
-            for (CMSSymbolState *s in self.symbols) {
-                s.hasOccurrence = NO;
-                [s.history removeAllObjects];
+            // Spin estimate restarted.
+            // Old spin positions cannot be compared.
+
+            for (CMSSymbolState *symbol
+                 in self.symbols) {
+
+                symbol.hasOccurrence = NO;
+
+                [symbol.history
+                    removeAllObjects];
             }
         }
 
@@ -476,121 +626,173 @@ static CMSBridgePanel *gPanel = nil;
         self.hasSpin = YES;
 
     } else {
+
         self.hasSpin = NO;
     }
 
-    self.spinLabel.text =
+    NSString *spinText =
         self.hasSpin
             ? [NSString stringWithFormat:
-                @"Spins ~%lld", self.currentSpin]
+                @"Spins ~%lld",
+                self.currentSpin]
             : @"Spins ~—";
 
-    for (CMSSymbolState *s in self.symbols) {
+    CMSSetText(self.spinLabel, spinText);
 
-        if ([s.key
+    // Update each symbol independently.
+
+    for (CMSSymbolState *symbol
+         in self.symbols) {
+
+        // Bottle detection is not yet implemented
+        // by the known Logger version.
+
+        if ([symbol.key
                 isEqualToString:@"GREEN_BOTTLE"] &&
-            !counts[s.key]) {
+            !counts[symbol.key]) {
 
-            for (UILabel *cell in s.cells)
-                cell.text = @"—";
+            for (UILabel *cell in symbol.cells)
+                CMSSetText(cell, @"—");
 
-            s.hasBaseline = NO;
-            s.hasOccurrence = NO;
-            [s.history removeAllObjects];
+            symbol.hasBaseline = NO;
+            symbol.hasOccurrence = NO;
+
+            [symbol.history removeAllObjects];
 
             continue;
         }
 
         long long count = 0;
 
-        if (!CMSReadCount(counts, s.key, &count))
+        if (!CMSReadCount(
+                counts,
+                symbol.key,
+                &count)) {
+
             continue;
+        }
 
-        if (!s.hasBaseline) {
+        if (!symbol.hasBaseline) {
 
-            s.observedCount = count;
-            s.hasBaseline = YES;
+            // Establish current counter baseline.
+            // Do not invent historical events.
 
-        } else if (count < s.observedCount) {
+            symbol.observedCount = count;
+            symbol.hasBaseline = YES;
 
-            s.observedCount = count;
-            s.hasOccurrence = NO;
-            [s.history removeAllObjects];
+        } else if (count < symbol.observedCount) {
 
-        } else if (count > s.observedCount) {
+            // Logger reset.
 
-            // Reset only this symbol.
+            symbol.observedCount = count;
+            symbol.hasOccurrence = NO;
+
+            [symbol.history removeAllObjects];
+
+        } else if (count > symbol.observedCount) {
+
+            // New occurrence of THIS symbol only.
 
             if (self.hasSpin) {
 
-                if (s.hasOccurrence) {
+                if (symbol.hasOccurrence) {
 
                     long long interval =
-                        self.currentSpin - s.lastSpin;
+                        self.currentSpin -
+                        symbol.lastSpin;
 
                     if (interval >= 0) {
 
-                        [s.history
+                        [symbol.history
                             insertObject:@(interval)
                             atIndex:0];
 
-                        while (s.history.count > 3)
-                            [s.history removeLastObject];
+                        while (symbol.history.count > 3) {
+
+                            [symbol.history
+                                removeLastObject];
+                        }
                     }
                 }
 
-                s.lastSpin = self.currentSpin;
-                s.hasOccurrence = YES;
+                symbol.lastSpin =
+                    self.currentSpin;
+
+                symbol.hasOccurrence = YES;
 
             } else {
-                s.hasOccurrence = NO;
+
+                symbol.hasOccurrence = NO;
             }
 
-            s.observedCount = count;
+            symbol.observedCount = count;
         }
 
-        NSString *now = @"—";
+        // NU: elapsed spins since last occurrence.
 
-        if (self.hasSpin && s.hasOccurrence) {
+        NSString *currentText = @"—";
+
+        if (self.hasSpin &&
+            symbol.hasOccurrence) {
 
             long long elapsed =
-                self.currentSpin - s.lastSpin;
+                self.currentSpin -
+                symbol.lastSpin;
 
-            if (elapsed >= 0)
-                now = [NSString stringWithFormat:
-                    @"%lld", elapsed];
+            if (elapsed >= 0) {
+
+                currentText =
+                    [NSString stringWithFormat:
+                        @"%lld", elapsed];
+            }
         }
 
-        s.cells[0].text = now;
+        CMSSetText(
+            symbol.cells[0],
+            currentText);
+
+        // FÖRRA, -2, -3.
 
         for (NSUInteger i = 0; i < 3; i++) {
 
-            s.cells[i + 1].text =
-                i < s.history.count
-                    ? [s.history[i] stringValue]
-                    : @"—";
+            NSString *value = @"—";
+
+            if (i < symbol.history.count) {
+
+                value =
+                    [symbol.history[i]
+                        stringValue];
+            }
+
+            CMSSetText(
+                symbol.cells[i + 1],
+                value);
         }
     }
 
-    self.statusLabel.text =
+    CMSSetText(
+        self.statusLabel,
         counts[@"GREEN_BOTTLE"]
-            ? @"10 Hz · transparent · touch-through"
-            : @"10 Hz · flaska ej identifierad";
+            ? @"10 Hz · touch-through · 35 %"
+            : @"10 Hz · flaska ej identifierad");
 }
 
 @end
 
-#pragma mark - Setup
+#pragma mark - Window setup
 
 static UIWindowScene *CMSForegroundScene(void) {
 
     for (UIScene *scene in
          UIApplication.sharedApplication.connectedScenes) {
 
-        if ([scene isKindOfClass:UIWindowScene.class] &&
+        if ([scene
+                isKindOfClass:UIWindowScene.class] &&
             scene.activationState ==
-                UISceneActivationStateForegroundActive)
+                UISceneActivationStateForegroundActive) {
+
             return (UIWindowScene *)scene;
+        }
     }
 
     return nil;
@@ -598,21 +800,23 @@ static UIWindowScene *CMSForegroundScene(void) {
 
 static void CMSSetup(void) {
 
-    if (gPanel) return;
+    if (gBridgePanel)
+        return;
 
     UIWindowScene *scene =
         CMSForegroundScene();
 
-    if (!scene) return;
+    if (!scene)
+        return;
 
-    gWindow =
+    gBridgeWindow =
         [[CMSBridgeWindow alloc]
             initWithWindowScene:scene];
 
-    gWindow.frame =
+    gBridgeWindow.frame =
         scene.coordinateSpace.bounds;
 
-    gWindow.windowLevel =
+    gBridgeWindow.windowLevel =
         UIWindowLevelAlert + 10;
 
     UIViewController *controller =
@@ -621,33 +825,42 @@ static void CMSSetup(void) {
     controller.view.backgroundColor =
         UIColor.clearColor;
 
-    gWindow.rootViewController = controller;
+    gBridgeWindow.rootViewController =
+        controller;
 
-    gPanel =
+    gBridgePanel =
         [[CMSBridgePanel alloc]
             initWithFrame:
-                CGRectMake(12, 90, 320, 280)];
+                CGRectMake(12, 90, 322, 294)];
 
-    [controller.view addSubview:gPanel];
+    [controller.view
+        addSubview:gBridgePanel];
 
-    gWindow.panel = gPanel;
-    gWindow.hidden = NO;
+    gBridgeWindow.panel =
+        gBridgePanel;
 
-    [gPanel refresh];
+    gBridgeWindow.hidden = NO;
+
+    [gBridgePanel refresh];
+
+    // Ten UI refreshes per second.
+    // This does not speed up Logger's detection.
 
     NSTimer *timer =
-        [NSTimer timerWithTimeInterval:kRefresh
+        [NSTimer timerWithTimeInterval:kCMSRefresh
                               repeats:YES
                                 block:^(NSTimer *t) {
 
-        if (!gPanel || gPanel.hidden)
+        if (!gBridgePanel ||
+            gBridgePanel.hidden)
             return;
 
-        if (UIApplication.sharedApplication.applicationState !=
+        if (UIApplication.sharedApplication
+                .applicationState !=
             UIApplicationStateActive)
             return;
 
-        [gPanel refresh];
+        [gBridgePanel refresh];
     }];
 
     [[NSRunLoop mainRunLoop]
@@ -655,23 +868,29 @@ static void CMSSetup(void) {
         forMode:NSRunLoopCommonModes];
 }
 
+#pragma mark - Startup
+
 __attribute__((constructor))
-static void CMSBridgeV18Start(void) {
+static void CMSBridgeV19Start(void) {
 
-    dispatch_async(dispatch_get_main_queue(), ^{
+    dispatch_async(
+        dispatch_get_main_queue(), ^{
 
-        const int delays[] = {3, 10, 25};
+            const int delays[] = {
+                3, 10, 25
+            };
 
-        for (unsigned i = 0; i < 3; i++) {
+            for (unsigned i = 0; i < 3; i++) {
 
-            dispatch_after(
-                dispatch_time(
-                    DISPATCH_TIME_NOW,
-                    (int64_t)delays[i] * NSEC_PER_SEC),
-                dispatch_get_main_queue(), ^{
+                dispatch_after(
+                    dispatch_time(
+                        DISPATCH_TIME_NOW,
+                        (int64_t)delays[i] *
+                            NSEC_PER_SEC),
+                    dispatch_get_main_queue(), ^{
 
-                    CMSSetup();
-                });
-        }
-    });
+                        CMSSetup();
+                    });
+            }
+        });
 }
