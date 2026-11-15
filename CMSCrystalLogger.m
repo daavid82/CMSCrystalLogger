@@ -2,33 +2,41 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <Vision/Vision.h>
+#import <CoreGraphics/CoreGraphics.h>
 #import <stdlib.h>
 #import <math.h>
+
+typedef NS_ENUM(NSInteger, CMSSpinState) {
+    CMSSpinStateReady = 0,
+    CMSSpinStateSpinning,
+    CMSSpinStateStopped,
+    CMSSpinStateResult
+};
 
 @interface CMSLogger : NSObject
 
 @property(nonatomic,strong) UIWindow *panel;
+@property(nonatomic,strong) NSTimer *timer;
+@property(nonatomic,strong) UITextView *logView;
 @property(nonatomic,strong) UILabel *statusLabel;
 @property(nonatomic,strong) UILabel *balanceLabel;
 @property(nonatomic,strong) UILabel *betLabel;
 @property(nonatomic,strong) UILabel *spinLabel;
+@property(nonatomic,strong) UILabel *stateLabel;
 @property(nonatomic,strong) UILabel *topLabel;
-@property(nonatomic,strong) UILabel *screenLabel;
-@property(nonatomic,strong) UITextView *logView;
-@property(nonatomic,strong) NSTimer *timer;
+@property(nonatomic,strong) UILabel *motionLabel;
 @property(nonatomic,strong) NSMutableArray *events;
 
 @property(nonatomic,assign) BOOL running;
 @property(nonatomic,assign) BOOL busy;
-@property(nonatomic,assign) BOOL hasBalance;
 @property(nonatomic,assign) BOOL gameVisible;
+@property(nonatomic,assign) BOOL hasBalance;
 @property(nonatomic,assign) BOOL trimFive;
-@property(nonatomic,assign) BOOL trimLocked;
 
 @property(nonatomic,assign) NSInteger attempts;
 @property(nonatomic,assign) NSInteger scans;
-@property(nonatomic,assign) NSInteger missedFrames;
 @property(nonatomic,assign) NSInteger visibleFrames;
+@property(nonatomic,assign) NSInteger missedFrames;
 
 @property(nonatomic,assign) NSInteger bet;
 @property(nonatomic,assign) NSInteger pendingBet;
@@ -40,19 +48,25 @@
 @property(nonatomic,assign) NSInteger balanceStreak;
 
 @property(nonatomic,assign) NSInteger estimatedSpins;
-@property(nonatomic,assign) NSInteger confirmedSpins;
+@property(nonatomic,assign) NSInteger observedCycles;
 @property(nonatomic,assign) NSInteger uncertainEvents;
-@property(nonatomic,assign) NSInteger positiveEvents;
 
-@property(nonatomic,assign) CGFloat balanceY;
-@property(nonatomic,assign) CGFloat balanceX;
-@property(nonatomic,assign) CGFloat balanceW;
-@property(nonatomic,assign) CGFloat betY;
-@property(nonatomic,assign) CGFloat topY;
+@property(nonatomic,assign) CMSSpinState spinState;
+@property(nonatomic,assign) NSInteger movingFrames;
+@property(nonatomic,assign) NSInteger stableFrames;
+@property(nonatomic,assign) NSInteger resultFrames;
+@property(nonatomic,assign) double motionScore;
+@property(nonatomic,assign) BOOL hasMotionReference;
 
+@property(nonatomic,copy) NSData *previousPixels;
 @property(nonatomic,copy) NSString *topResult;
 @property(nonatomic,copy) NSString *pendingTop;
 @property(nonatomic,assign) NSInteger topStreak;
+
+@property(nonatomic,assign) CGFloat balanceY;
+@property(nonatomic,assign) CGFloat balanceW;
+@property(nonatomic,assign) CGFloat betY;
+@property(nonatomic,assign) CGFloat topY;
 
 + (instancetype)shared;
 - (void)start;
@@ -69,20 +83,15 @@
         instance = [CMSLogger new];
         instance.events = [NSMutableArray new];
 
-        instance.balanceX = 0.39;
         instance.balanceY = 0.828;
         instance.balanceW = 0.23;
-
         instance.betY = 0.711;
         instance.topY = 0.20;
 
-        // Initial test preference, not a permanent
-        // assumption about every balance.
         instance.trimFive = YES;
-        instance.trimLocked = NO;
-
         instance.topResult = @"";
         instance.pendingTop = @"";
+        instance.spinState = CMSSpinStateReady;
     });
 
     return instance;
@@ -98,9 +107,7 @@
         return;
     }
 
-    NSDateFormatter *formatter =
-        [NSDateFormatter new];
-
+    NSDateFormatter *formatter = [NSDateFormatter new];
     formatter.dateFormat = @"HH:mm:ss";
 
     NSString *line = [NSString stringWithFormat:
@@ -119,7 +126,7 @@
     if (self.logView) {
         self.logView.text = all;
 
-        if (all.length > 0)
+        if (all.length)
             [self.logView scrollRangeToVisible:
                 NSMakeRange(all.length - 1, 1)];
     }
@@ -127,22 +134,33 @@
     NSString *path =
         [NSTemporaryDirectory()
             stringByAppendingPathComponent:
-                @"CMSCrystalV15.log"];
+                @"CMSCrystalV16.log"];
 
     [all writeToFile:path
            atomically:YES
              encoding:NSUTF8StringEncoding
                 error:nil];
 
-    NSLog(@"[CMSCrystalV15] %@", line);
+    NSLog(@"[CMSCrystalV16] %@", line);
+}
+
+- (NSString *)stateName {
+    switch (self.spinState) {
+        case CMSSpinStateReady: return @"READY";
+        case CMSSpinStateSpinning: return @"SPINNING";
+        case CMSSpinStateStopped: return @"STOPPED";
+        case CMSSpinStateResult: return @"RESULT";
+    }
+    return @"UNKNOWN";
 }
 
 - (void)refresh {
     self.statusLabel.text =
         [NSString stringWithFormat:
-            @"AUTO %@  |  SCANS %ld",
+            @"AUTO %@ | SCANS %ld | SCREEN %@",
             self.running ? @"ON" : @"OFF",
-            (long)self.scans];
+            (long)self.scans,
+            self.gameVisible ? @"GAME" : @"OTHER"];
 
     self.statusLabel.textColor =
         self.running ?
@@ -152,24 +170,28 @@
     self.balanceLabel.text =
         self.hasBalance ?
             [NSString stringWithFormat:
-                @"BAL %lld   RAW %lld",
+                @"BAL %lld | RAW %lld",
                 self.balance,
                 self.rawBalance] :
-            @"BALANCE: WAITING";
+            @"BALANCE WAITING";
 
     self.betLabel.text =
         self.bet > 0 ?
             [NSString stringWithFormat:
-                @"CURRENT BET: x%ld",
+                @"CURRENT BET x%ld",
                 (long)self.bet] :
-            @"CURRENT BET: WAITING";
+            @"CURRENT BET WAITING";
 
     self.spinLabel.text =
         [NSString stringWithFormat:
-            @"EST %ld  |  CONF %ld  |  ? %ld",
+            @"EST %ld | CYCLES %ld | ? %ld",
             (long)self.estimatedSpins,
-            (long)self.confirmedSpins,
+            (long)self.observedCycles,
             (long)self.uncertainEvents];
+
+    self.stateLabel.text =
+        [NSString stringWithFormat:
+            @"STATE: %@", [self stateName]];
 
     self.topLabel.text =
         [NSString stringWithFormat:
@@ -177,15 +199,14 @@
             self.topResult.length ?
                 self.topResult : @"UNKNOWN"];
 
-    self.screenLabel.text =
+    self.motionLabel.text =
         [NSString stringWithFormat:
-            @"SCREEN: %@  |  TRIM5: %@",
-            self.gameVisible ?
-                @"GAME" : @"OTHER / UNKNOWN",
+            @"MOTION %.1f%% | TRIM5 %@",
+            self.motionScore * 100.0,
             self.trimFive ? @"ON" : @"OFF"];
 }
 
-#pragma mark - Capture
+#pragma mark - Screenshot
 
 - (UIWindow *)gameWindow {
     UIWindow *best = nil;
@@ -193,15 +214,13 @@
     for (UIScene *scene in
          UIApplication.sharedApplication.connectedScenes) {
 
-        if (![scene isKindOfClass:
-                [UIWindowScene class]])
+        if (![scene isKindOfClass:[UIWindowScene class]])
             continue;
 
         for (UIWindow *window in
              ((UIWindowScene *)scene).windows) {
 
-            if (window == self.panel ||
-                window.hidden)
+            if (window == self.panel || window.hidden)
                 continue;
 
             if (window.bounds.size.width < 100 ||
@@ -224,8 +243,7 @@
         return nil;
 
     UIGraphicsImageRendererFormat *format =
-        [UIGraphicsImageRendererFormat
-            defaultFormat];
+        [UIGraphicsImageRendererFormat defaultFormat];
 
     format.scale = 1;
     format.opaque = YES;
@@ -236,8 +254,7 @@
                   format:format];
 
     return [renderer imageWithActions:
-        ^(UIGraphicsImageRendererContext *ctx) {
-
+        ^(UIGraphicsImageRendererContext *context) {
             [window drawViewHierarchyInRect:
                 CGRectMake(0, 0,
                     window.bounds.size.width,
@@ -256,21 +273,177 @@
     CGFloat ih = CGImageGetHeight(image);
 
     CGRect rect =
-        CGRectMake(iw*x,
-                   ih*y,
-                   iw*width,
-                   ih*height);
+        CGRectMake(iw*x, ih*y,
+                   iw*width, ih*height);
 
     rect = CGRectIntersection(
-        rect,
-        CGRectMake(0,0,iw,ih));
+        rect, CGRectMake(0,0,iw,ih));
 
     if (CGRectIsEmpty(rect))
         return NULL;
 
     return CGImageCreateWithImageInRect(
-        image,
-        CGRectIntegral(rect));
+        image, CGRectIntegral(rect));
+}
+
+#pragma mark - Wheel motion
+
+// Produces a small grayscale image of the
+// central wheel area for frame comparison.
+
+- (NSData *)motionPixels:(CGImageRef)image {
+    if (!image)
+        return nil;
+
+    const size_t width = 48;
+    const size_t height = 32;
+    const size_t count = width * height;
+
+    NSMutableData *data =
+        [NSMutableData dataWithLength:count];
+
+    CGColorSpaceRef colorSpace =
+        CGColorSpaceCreateDeviceGray();
+
+    CGContextRef context =
+        CGBitmapContextCreate(
+            data.mutableBytes,
+            width,
+            height,
+            8,
+            width,
+            colorSpace,
+            kCGImageAlphaNone);
+
+    CGColorSpaceRelease(colorSpace);
+
+    if (!context)
+        return nil;
+
+    CGContextSetInterpolationQuality(
+        context,
+        kCGInterpolationLow);
+
+    CGContextDrawImage(
+        context,
+        CGRectMake(0,0,width,height),
+        image);
+
+    CGContextRelease(context);
+
+    return data;
+}
+
+- (double)difference:(NSData *)a
+                    other:(NSData *)b {
+
+    if (!a || !b || a.length != b.length)
+        return -1;
+
+    const uint8_t *pa = a.bytes;
+    const uint8_t *pb = b.bytes;
+
+    NSUInteger count = a.length;
+    double sum = 0;
+
+    for (NSUInteger i=0; i<count; i++)
+        sum += abs((int)pa[i] - (int)pb[i]);
+
+    return sum / ((double)count * 255.0);
+}
+
+- (void)resetMotion {
+    self.previousPixels = nil;
+    self.hasMotionReference = NO;
+    self.movingFrames = 0;
+    self.stableFrames = 0;
+    self.resultFrames = 0;
+    self.motionScore = 0;
+    self.spinState = CMSSpinStateReady;
+}
+
+- (void)processMotion:(NSData *)pixels {
+    if (!self.gameVisible || !pixels)
+        return;
+
+    if (!self.hasMotionReference) {
+        self.previousPixels = pixels;
+        self.hasMotionReference = YES;
+        return;
+    }
+
+    double score =
+        [self difference:self.previousPixels
+                   other:pixels];
+
+    self.previousPixels = pixels;
+
+    if (score < 0)
+        return;
+
+    self.motionScore = score;
+
+    // Thresholds are experimental and may need
+    // adjustment for this game's animations.
+    BOOL moving = score > 0.075;
+    BOOL stable = score < 0.025;
+
+    if (moving) {
+        self.movingFrames++;
+        self.stableFrames = 0;
+    } else if (stable) {
+        self.stableFrames++;
+        self.movingFrames = 0;
+    } else {
+        self.movingFrames = 0;
+        self.stableFrames = 0;
+    }
+
+    switch (self.spinState) {
+        case CMSSpinStateReady:
+            if (self.movingFrames >= 2) {
+                self.spinState = CMSSpinStateSpinning;
+
+                [self log:[NSString stringWithFormat:
+                    @"SPIN MOTION START | SCORE %.3f",
+                    score]];
+            }
+            break;
+
+        case CMSSpinStateSpinning:
+            if (self.stableFrames >= 3) {
+                self.spinState = CMSSpinStateStopped;
+                self.resultFrames = 0;
+
+                [self log:@"WHEEL APPEARS STOPPED"];
+            }
+            break;
+
+        case CMSSpinStateStopped:
+            self.resultFrames++;
+
+            if (self.resultFrames >= 2) {
+                self.spinState = CMSSpinStateResult;
+                self.observedCycles++;
+
+                [self log:[NSString stringWithFormat:
+                    @"OBSERVED WHEEL CYCLE #%ld",
+                    (long)self.observedCycles]];
+
+                [self log:
+                    @"CYCLE NOT YET VERIFIED AS GAME SPIN"];
+            }
+            break;
+
+        case CMSSpinStateResult:
+            if (self.stableFrames >= 6) {
+                self.spinState = CMSSpinStateReady;
+                self.movingFrames = 0;
+
+                [self log:@"READY FOR NEXT MOTION"];
+            }
+            break;
+    }
 }
 
 #pragma mark - OCR
@@ -286,13 +459,11 @@
         VNRequestTextRecognitionLevelAccurate;
 
     request.usesLanguageCorrection = NO;
-    request.recognitionLanguages =
-        @[@"en-US"];
+    request.recognitionLanguages = @[@"en-US"];
 
     VNImageRequestHandler *handler =
         [[VNImageRequestHandler alloc]
-            initWithCGImage:image
-                    options:@{}];
+            initWithCGImage:image options:@{}];
 
     NSError *error = nil;
 
@@ -300,8 +471,7 @@
                             error:&error])
         return @[];
 
-    NSMutableArray *result =
-        [NSMutableArray new];
+    NSMutableArray *result = [NSMutableArray new];
 
     for (VNRecognizedTextObservation *obs
          in request.results) {
@@ -322,8 +492,7 @@
 }
 
 - (NSString *)raw:(NSArray *)items {
-    NSMutableArray *parts =
-        [NSMutableArray new];
+    NSMutableArray *parts = [NSMutableArray new];
 
     for (NSDictionary *item in items)
         [parts addObject:item[@"text"]];
@@ -346,8 +515,8 @@
 }
 
 - (long long)readRawBalance:(NSArray *)items {
-    float bestConfidence = -1;
     long long best = -1;
+    float bestConfidence = -1;
 
     for (NSDictionary *item in items) {
         NSString *text =
@@ -394,8 +563,8 @@
 }
 
 - (NSInteger)readBet:(NSArray *)items {
-    float bestConfidence = -1;
     NSInteger best = 0;
+    float bestConfidence = -1;
 
     for (NSDictionary *item in items) {
         NSString *text =
@@ -413,7 +582,7 @@
         NSString *number =
             [text substringFromIndex:1];
 
-        if (number.length < 1 ||
+        if (!number.length ||
             number.length > 5 ||
             ![[self digits:number]
                 isEqualToString:number])
@@ -438,8 +607,8 @@
 
 - (NSString *)readTop:(NSArray *)items {
     NSArray *names =
-        @[@"ATTACK", @"POINT", @"STEAL",
-          @"SHIELD", @"SPINS"];
+        @[@"ATTACK",@"POINT",@"STEAL",
+          @"SHIELD",@"SPINS"];
 
     NSString *best = @"";
     float confidence = 0;
@@ -454,9 +623,8 @@
         for (NSString *name in names) {
             if ([text containsString:name] &&
                 score > confidence) {
-
-                confidence = score;
                 best = name;
+                confidence = score;
             }
         }
     }
@@ -464,7 +632,22 @@
     return confidence >= 0.75 ? best : @"";
 }
 
-#pragma mark - Bet tracking
+#pragma mark - Balance and bet
+
+- (long long)normalizeBalance:(long long)raw {
+    if (raw < 0)
+        return -1;
+
+    // Experimental correction for observed
+    // seven-digit readings ending in extra 5.
+    if (self.trimFive &&
+        raw >= 1000000 &&
+        raw <= 9999999 &&
+        raw % 10 == 5)
+        return raw / 10;
+
+    return raw;
+}
 
 - (void)processBet:(NSInteger)value {
     if (value <= 0) {
@@ -490,26 +673,6 @@
     }
 }
 
-#pragma mark - Smart balance
-
-- (long long)normalizedBalance:(long long)raw {
-    if (raw < 0)
-        return -1;
-
-    if (!self.trimFive)
-        return raw;
-
-    // An extra trailing 5 has been observed.
-    // Apply only when the candidate has seven
-    // digits and ends in 5.
-    if (raw >= 1000000 &&
-        raw <= 9999999 &&
-        raw % 10 == 5)
-        return raw / 10;
-
-    return raw;
-}
-
 - (void)processBalance:(long long)raw {
     if (raw < 0) {
         self.balanceStreak = 0;
@@ -517,7 +680,7 @@
     }
 
     long long value =
-        [self normalizedBalance:raw];
+        [self normalizeBalance:raw];
 
     if (value == self.pendingBalance)
         self.balanceStreak++;
@@ -548,7 +711,6 @@
     long long old = self.balance;
     long long delta = value - old;
 
-    // Reject missing-digit OCR values.
     if (llabs(delta) > 100000) {
         if (self.scans % 10 == 0)
             [self log:[NSString stringWithFormat:
@@ -557,27 +719,21 @@
         return;
     }
 
-    // The game may be showing a bonus, refund,
-    // or a different state. Never claim that
-    // a balance change proves a spin.
     self.balance = value;
 
     [self log:[NSString stringWithFormat:
         @"BALANCE: %lld -> %lld (%+lld)",
         old,value,delta]];
 
-    if (delta > 0) {
-        self.positiveEvents++;
-
-        [self log:[NSString stringWithFormat:
-            @"BALANCE INCREASE +%lld | BONUS/REFUND/OTHER",
-            delta]];
+    if (delta >= 0) {
+        [self log:
+            @"BALANCE INCREASE / NO SPIN INFERENCE"];
         return;
     }
 
     if (self.bet <= 0) {
         self.uncertainEvents++;
-        [self log:@"NEGATIVE DELTA: BET UNKNOWN"];
+        [self log:@"BET UNKNOWN"];
         return;
     }
 
@@ -586,20 +742,13 @@
     if (spent % self.bet == 0) {
         long long count = spent / self.bet;
 
-        // Cap one observation to avoid
-        // interpreting large jumps as many spins.
         if (count >= 1 && count <= 100) {
             self.estimatedSpins += (NSInteger)count;
 
             [self log:[NSString stringWithFormat:
-                @"ESTIMATED SPINS +%lld | TOTAL %ld | BET x%ld",
+                @"ESTIMATED SPINS +%lld | TOTAL %ld",
                 count,
-                (long)self.estimatedSpins,
-                (long)self.bet]];
-
-            if (count > 1)
-                [self log:
-                    @"MULTIPLE POSSIBLE SPINS - NOT VERIFIED"];
+                (long)self.estimatedSpins]];
 
             return;
         }
@@ -608,11 +757,11 @@
     self.uncertainEvents++;
 
     [self log:[NSString stringWithFormat:
-        @"UNCLASSIFIED DELTA %lld | BET x%ld",
-        delta,(long)self.bet]];
+        @"UNCLASSIFIED BALANCE DELTA %+lld",
+        delta]];
 }
 
-#pragma mark - Screen and results
+#pragma mark - Screen state and top
 
 - (void)processVisibility:(BOOL)visible {
     if (visible) {
@@ -623,6 +772,7 @@
             self.visibleFrames >= 2) {
 
             self.gameVisible = YES;
+            [self resetMotion];
             [self log:@"GAME SCREEN DETECTED"];
         }
     } else {
@@ -633,19 +783,23 @@
             self.missedFrames >= 3) {
 
             self.gameVisible = NO;
-            self.topStreak = 0;
+            [self resetMotion];
+
             self.pendingTop = @"";
+            self.topStreak = 0;
 
             [self log:
-                @"GAME SCREEN NOT DETECTED - TRACKING PAUSED"];
+                @"GAME SCREEN LOST - MOTION RESET"];
         }
     }
 }
 
 - (void)processTop:(NSString *)value {
-    if (!self.gameVisible || !value.length) {
-        self.topStreak = 0;
+    if (!self.gameVisible ||
+        !value.length) {
+
         self.pendingTop = @"";
+        self.topStreak = 0;
         return;
     }
 
@@ -662,15 +816,15 @@
         self.topResult = value;
 
         [self log:[NSString stringWithFormat:
-            @"TOP CANDIDATE: %@ | NOT CONFIRMED",
+            @"TOP CANDIDATE: %@",
             value]];
     }
 }
 
-#pragma mark - Scanner
+#pragma mark - Scan
 
 - (void)scan {
-    if (self.busy || !self.running)
+    if (!self.running || self.busy)
         return;
 
     self.busy = YES;
@@ -689,7 +843,7 @@
 
     CGImageRef balanceImage =
         [self crop:source
-                x:self.balanceX
+                x:0.39
                 y:self.balanceY
                 w:self.balanceW
                 h:0.036];
@@ -708,16 +862,25 @@
                 w:0.60
                 h:0.12];
 
+    // Experimental motion region.
+    // Avoids most of the upper UI and
+    // the spin button at the bottom.
+    CGImageRef wheelImage =
+        [self crop:source
+                x:0.23
+                y:0.34
+                w:0.54
+                h:0.25];
+
     if (!balanceImage ||
         !betImage ||
-        !topImage) {
+        !topImage ||
+        !wheelImage) {
 
-        if (balanceImage)
-            CGImageRelease(balanceImage);
-        if (betImage)
-            CGImageRelease(betImage);
-        if (topImage)
-            CGImageRelease(topImage);
+        if (balanceImage) CGImageRelease(balanceImage);
+        if (betImage) CGImageRelease(betImage);
+        if (topImage) CGImageRelease(topImage);
+        if (wheelImage) CGImageRelease(wheelImage);
 
         self.busy = NO;
         [self log:@"CROP FAILED"];
@@ -738,14 +901,18 @@
             NSArray *topTexts =
                 [self ocr:topImage];
 
+            NSData *pixels =
+                [self motionPixels:wheelImage];
+
             CGImageRelease(balanceImage);
             CGImageRelease(betImage);
             CGImageRelease(topImage);
+            CGImageRelease(wheelImage);
 
             long long rawBalance =
                 [self readRawBalance:balanceTexts];
 
-            NSInteger currentBet =
+            NSInteger bet =
                 [self readBet:betTexts];
 
             NSString *top =
@@ -770,13 +937,14 @@
 
                 BOOL visible =
                     rawBalance >= 0 ||
-                    currentBet > 0;
+                    bet > 0;
 
                 [self processVisibility:visible];
 
                 if (self.gameVisible) {
-                    [self processBet:currentBet];
+                    [self processBet:bet];
                     [self processBalance:rawBalance];
+                    [self processMotion:pixels];
                     [self processTop:top];
                 }
 
@@ -789,6 +957,11 @@
 
                     [self log:[NSString stringWithFormat:
                         @"TOP OCR RAW: %@",rawTop]];
+
+                    [self log:[NSString stringWithFormat:
+                        @"MOTION SCORE %.3f | STATE %@",
+                        self.motionScore,
+                        [self stateName]]];
                 }
 
                 [self refresh];
@@ -801,7 +974,7 @@
     [self scan];
 }
 
-#pragma mark - Controls
+#pragma mark - Buttons
 
 - (void)resetBaseline {
     self.hasBalance = NO;
@@ -815,14 +988,10 @@
 
 - (void)toggleTrim {
     self.trimFive = !self.trimFive;
-
     [self resetBaseline];
 
     [self log:[NSString stringWithFormat:
-        @"TRIM5 %@",
-        self.trimFive ? @"ON" : @"OFF"]];
-
-    [self refresh];
+        @"TRIM5 %@",self.trimFive ? @"ON" : @"OFF"]];
 }
 
 - (void)toggle {
@@ -837,67 +1006,34 @@
         self.running = YES;
         self.scans = 0;
         self.estimatedSpins = 0;
-        self.confirmedSpins = 0;
+        self.observedCycles = 0;
         self.uncertainEvents = 0;
-        self.positiveEvents = 0;
 
         self.bet = 0;
         self.betStreak = 0;
-
         self.gameVisible = NO;
-        self.missedFrames = 0;
         self.visibleFrames = 0;
+        self.missedFrames = 0;
 
         self.topResult = @"";
         self.pendingTop = @"";
         self.topStreak = 0;
 
+        [self resetMotion];
         [self resetBaseline];
 
         self.timer =
-            [NSTimer scheduledTimerWithTimeInterval:0.6
+            [NSTimer scheduledTimerWithTimeInterval:0.35
                                              target:self
                                            selector:@selector(tick:)
                                            userInfo:nil
                                             repeats:YES];
 
-        [self log:@"AUTO STARTED - V15"];
+        [self log:@"AUTO STARTED - V16"];
         [self scan];
     }
 
     [self refresh];
-}
-
-- (void)balanceUp {
-    self.balanceY =
-        MAX(0.70,self.balanceY-0.01);
-
-    [self resetBaseline];
-    [self log:@"BALANCE AREA UP"];
-}
-
-- (void)balanceDown {
-    self.balanceY =
-        MIN(0.90,self.balanceY+0.01);
-
-    [self resetBaseline];
-    [self log:@"BALANCE AREA DOWN"];
-}
-
-- (void)balanceNarrow {
-    self.balanceW =
-        MAX(0.15,self.balanceW-0.01);
-
-    [self resetBaseline];
-    [self log:@"BALANCE AREA NARROW"];
-}
-
-- (void)balanceWide {
-    self.balanceW =
-        MIN(0.35,self.balanceW+0.01);
-
-    [self resetBaseline];
-    [self log:@"BALANCE AREA WIDE"];
 }
 
 - (void)copyLog {
@@ -907,12 +1043,56 @@
         [self.events componentsJoinedByString:@"\n"];
 }
 
+- (void)balanceUp {
+    self.balanceY =
+        MAX(0.70,self.balanceY-0.01);
+    [self resetBaseline];
+}
+
+- (void)balanceDown {
+    self.balanceY =
+        MIN(0.90,self.balanceY+0.01);
+    [self resetBaseline];
+}
+
+- (void)balanceNarrow {
+    self.balanceW =
+        MAX(0.15,self.balanceW-0.01);
+    [self resetBaseline];
+}
+
+- (void)balanceWide {
+    self.balanceW =
+        MIN(0.35,self.balanceW+0.01);
+    [self resetBaseline];
+}
+
 #pragma mark - Overlay
 
-- (UIButton *)button:(NSString *)title
-                frame:(CGRect)frame
-               action:(SEL)action
-               parent:(UIView *)parent {
+- (UILabel *)label:(CGRect)frame
+             font:(CGFloat)size
+            color:(UIColor *)color
+           parent:(UIView *)parent {
+
+    UILabel *label =
+        [[UILabel alloc] initWithFrame:frame];
+
+    label.font =
+        [UIFont boldSystemFontOfSize:size];
+
+    label.textColor = color;
+    label.adjustsFontSizeToFitWidth = YES;
+    label.minimumScaleFactor = 0.7;
+
+    [parent addSubview:label];
+
+    return label;
+}
+
+- (void)button:(NSString *)title
+         frame:(CGRect)frame
+        action:(SEL)action
+        parent:(UIView *)parent {
 
     UIButton *button =
         [UIButton buttonWithType:UIButtonTypeSystem];
@@ -938,28 +1118,6 @@
      forControlEvents:UIControlEventTouchUpInside];
 
     [parent addSubview:button];
-
-    return button;
-}
-
-- (UILabel *)label:(CGRect)frame
-             font:(CGFloat)font
-            color:(UIColor *)color
-           parent:(UIView *)parent {
-
-    UILabel *label =
-        [[UILabel alloc] initWithFrame:frame];
-
-    label.textColor = color;
-    label.font =
-        [UIFont boldSystemFontOfSize:font];
-
-    label.adjustsFontSizeToFitWidth = YES;
-    label.minimumScaleFactor = 0.7;
-
-    [parent addSubview:label];
-
-    return label;
 }
 
 - (void)movePanel:
@@ -1043,7 +1201,7 @@
                 parent:vc.view];
 
     title.text =
-        @"CMSCrystalLogger v15";
+        @"CMSCrystalLogger v16";
 
     title.userInteractionEnabled = YES;
 
@@ -1053,50 +1211,50 @@
                     action:@selector(movePanel:)]];
 
     self.statusLabel =
-        [self label:
-            CGRectMake(12,40,width-24,22)
-                  font:12
+        [self label:CGRectMake(12,40,width-24,22)
+                  font:11
                  color:UIColor.whiteColor
                 parent:vc.view];
 
     self.balanceLabel =
-        [self label:
-            CGRectMake(12,68,width-24,27)
+        [self label:CGRectMake(12,68,width-24,26)
                   font:15
                  color:UIColor.systemGreenColor
                 parent:vc.view];
 
     self.betLabel =
-        [self label:
-            CGRectMake(12,99,width-24,24)
+        [self label:CGRectMake(12,98,width-24,24)
                   font:14
                  color:UIColor.whiteColor
                 parent:vc.view];
 
     self.spinLabel =
-        [self label:
-            CGRectMake(12,127,width-24,25)
+        [self label:CGRectMake(12,127,width-24,25)
                   font:15
                  color:UIColor.systemCyanColor
                 parent:vc.view];
 
+    self.stateLabel =
+        [self label:CGRectMake(12,155,width-24,25)
+                  font:15
+                 color:UIColor.systemOrangeColor
+                parent:vc.view];
+
     self.topLabel =
-        [self label:
-            CGRectMake(12,156,width-24,23)
+        [self label:CGRectMake(12,184,width-24,23)
                   font:13
                  color:UIColor.systemYellowColor
                 parent:vc.view];
 
-    self.screenLabel =
-        [self label:
-            CGRectMake(12,183,width-24,22)
+    self.motionLabel =
+        [self label:CGRectMake(12,211,width-24,22)
                   font:11
                  color:UIColor.lightGrayColor
                 parent:vc.view];
 
     self.logView =
         [[UITextView alloc] initWithFrame:
-            CGRectMake(10,211,width-20,127)];
+            CGRectMake(10,240,width-20,98)];
 
     self.logView.backgroundColor =
         UIColor.clearColor;
@@ -1113,8 +1271,7 @@
     [vc.view addSubview:self.logView];
 
     CGFloat gap = 6;
-    CGFloat bw =
-        (width-36-2*gap)/3;
+    CGFloat bw = (width-36-2*gap)/3;
 
     [self button:@"AUTO ON/OFF"
           frame:CGRectMake(12,345,bw,32)
@@ -1146,8 +1303,7 @@
          action:@selector(resetBaseline)
          parent:vc.view];
 
-    CGFloat half =
-        (width-30)/2;
+    CGFloat half = (width-30)/2;
 
     [self button:@"BAL NARROW"
           frame:CGRectMake(12,425,half,30)
@@ -1164,11 +1320,11 @@
 
     [self refresh];
 
-    [self log:@"V15 READY"];
-    [self log:@"SMART BALANCE TRACKING ENABLED"];
+    [self log:@"V16 READY"];
+    [self log:@"WHEEL MOTION DETECTION ENABLED"];
     [self log:@"BET OCR X / MULTIPLY / STAR"];
-    [self log:@"ESTIMATED AND CONFIRMED COUNTS SEPARATE"];
-    [self log:@"CONFIRMED COUNT REQUIRES FUTURE VALIDATION"];
+    [self log:@"ESTIMATED SPINS AND OBSERVED CYCLES"];
+    [self log:@"MOTION THRESHOLDS ARE EXPERIMENTAL"];
 }
 
 - (void)start {
