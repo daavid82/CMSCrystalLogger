@@ -20,9 +20,9 @@
 @property(nonatomic,assign) BOOL resultTransitionSeen;
 @property(nonatomic,assign) BOOL running,ocrBusy,processing,markerVisible,trimFive,hasBalance,motionActive;
 @property(nonatomic,assign) NSUInteger generation;
-@property(nonatomic,assign) NSInteger motionStarts,motionStops,visualCycles,unknown,review,duplicates,bet,betCandidate,betHits,balanceHits,frameCount,motionQuiet,spinCandidates,ignoredOnsets;
-@property(nonatomic,assign) long long balance,balanceCandidate,estimatedSpins;
-@property(nonatomic,assign) NSTimeInterval lastTick,lastMotionStart,lastVisualCycle,lastBalanceCheck,lastResultCheck,lastFpsLog,lastCandidateTime;
+@property(nonatomic,assign) NSInteger motionStarts,motionStops,visualCycles,unknown,review,duplicates,bet,betCandidate,betHits,balanceHits,frameCount,motionQuiet,spinCandidates,ignoredOnsets,balanceEvents,positiveBalanceEvents;
+@property(nonatomic,assign) long long balance,balanceCandidate,estimatedSpins,positiveBalanceTotal;
+@property(nonatomic,assign) NSTimeInterval lastTick,lastMotionStart,lastVisualCycle,lastBalanceCheck,lastResultCheck,lastFpsLog,lastCandidateTime,lastResultSnapshotTime;
 @property(nonatomic,assign) NSInteger fpsFrames;
 @property(nonatomic,assign) double fps;
 @property(nonatomic,assign) CGFloat rx,ry,rw,rh;
@@ -41,7 +41,7 @@
  NSDateFormatter *f=[NSDateFormatter new]; f.dateFormat=@"HH:mm:ss.SSS";
  NSString *line=[NSString stringWithFormat:@"%@ %@",[f stringFromDate:[NSDate date]],s];
  [self.logs addObject:line]; if(self.logs.count>2000)[self.logs removeObjectAtIndex:0];
- NSLog(@"[CMSCrystalV25] %@",line);
+ NSLog(@"[CMSCrystalV26] %@",line);
  if(self.logView){self.logView.text=[self.logs componentsJoinedByString:@"\n"]; NSUInteger n=self.logView.text.length;if(n)[self.logView scrollRangeToVisible:NSMakeRange(n-1,1)];}
 }
 - (UIWindow *)gameWindow {
@@ -151,7 +151,9 @@
  if(value==self.balance)return;long long delta=value-self.balance;
  if(llabs(delta)>100000){[self log:[NSString stringWithFormat:@"BALANCE REJECTED %lld",value]];return;}
  [self log:[NSString stringWithFormat:@"BALANCE %lld -> %lld (%+lld)",self.balance,value,delta]];self.balance=value;
- if(delta<0&&self.bet>0&&(-delta)%self.bet==0){long long spins=(-delta)/self.bet;if(spins>0&&spins<=100){self.estimatedSpins+=spins;[self log:[NSString stringWithFormat:@"ESTIMATED SPINS +%lld TOTAL %lld | BALANCE-BASED NOT VERIFIED",spins,self.estimatedSpins]];}}
+ if(delta<0&&self.bet>0&&(-delta)%self.bet==0){long long spins=(-delta)/self.bet;if(spins>0&&spins<=100){self.estimatedSpins+=spins;self.balanceEvents++;[self log:[NSString stringWithFormat:@"ESTIMATED SPINS +%lld TOTAL %lld | BALANCE-BASED NOT VERIFIED",spins,self.estimatedSpins]];}}
+ if(delta>0){self.positiveBalanceEvents++;self.positiveBalanceTotal+=delta;[self log:[NSString stringWithFormat:@"BALANCE CREDIT +%lld | NOT A SPIN",delta]];}
+ if(delta<0&&(self.bet<=0||(-delta)%self.bet!=0)) [self log:@"BALANCE DEBIT UNCLASSIFIED | NO SPINS ADDED"];
  [self refresh];
 }
 - (NSArray<NSData *> *)motionData:(UIImage *)img {
@@ -181,20 +183,20 @@
    }else{self.ignoredOnsets++;[self log:[NSString stringWithFormat:@"ONSET SUPPRESSED | %.2fs SINCE CANDIDATE",now-self.lastCandidateTime]];}
   }
   // Capture a candidate result on a quiet transition, not after a long combined motion.
-  if(self.motionQuiet==2&&now-self.lastVisualCycle>.65){self.visualCycles++;self.lastVisualCycle=now;[self enqueueResult:img reason:[NSString stringWithFormat:@"QUIET-%ld",(long)self.visualCycles]];}
+  if(self.motionQuiet==2&&now-self.lastResultSnapshotTime>1.00){self.visualCycles++;self.lastVisualCycle=now;self.lastResultSnapshotTime=now;[self enqueueResult:img reason:[NSString stringWithFormat:@"QUIET-%ld",(long)self.visualCycles]];}
  }
  self.previousMotion=current;
  if(now-self.lastBalanceCheck>=.60){self.lastBalanceCheck=now;[self readBalance:img];}
  if(self.frameCount%10==0)[self refresh];
 }
 - (void)refresh {
- self.status.text=[NSString stringWithFormat:@"V25 %@ | FPS %.1f\nBALANCE SPINS ~%lld | x%ld\nCANDIDATES %ld | ONSETS %ld\nRESULT FRAMES %ld | UNKNOWN %ld\nATT %@  STEAL %@  SHIELD %@\nPOINT %@  SPINS %@\nREVIEW %ld | SAME %ld",self.running?@"ON":@"OFF",self.fps,self.estimatedSpins,(long)self.bet,(long)self.spinCandidates,(long)self.motionStarts,(long)self.visualCycles,(long)self.unknown,self.counts[@"ATTACK"],self.counts[@"STEAL"],self.counts[@"SHIELD"],self.counts[@"POINT"],self.counts[@"SPINS"],(long)self.review,(long)self.duplicates];
+ self.status.text=[NSString stringWithFormat:@"V26 %@ | FPS %.1f\nBALANCE ESTIMATE ~%lld | x%ld\nCANDIDATES %ld | ONSETS %ld\nBAL EVENTS %ld | CREDITS %ld\nRESULT FRAMES %ld | UNKNOWN %ld\nATT %@  STEAL %@  SHIELD %@\nPOINT %@  SPINS %@\nREVIEW %ld | SAME %ld",self.running?@"ON":@"OFF",self.fps,self.estimatedSpins,(long)self.bet,(long)self.spinCandidates,(long)self.motionStarts,(long)self.balanceEvents,(long)self.positiveBalanceEvents,(long)self.visualCycles,(long)self.unknown,self.counts[@"ATTACK"],self.counts[@"STEAL"],self.counts[@"SHIELD"],self.counts[@"POINT"],self.counts[@"SPINS"],(long)self.review,(long)self.duplicates];
 }
 - (void)toggle {
- if(self.running){self.running=NO;self.generation++;[self.timer invalidate];self.timer=nil;[self.snapshots removeAllObjects];self.processing=NO;self.ocrBusy=NO;[self log:@"AUTO STOPPED V25"];}
- else {self.running=YES;self.generation++;self.motionStarts=0;self.motionStops=0;self.spinCandidates=0;self.ignoredOnsets=0;self.lastCandidateTime=0;self.motionActive=NO;self.motionQuiet=0;self.visualCycles=0;self.unknown=0;self.review=0;self.duplicates=0;self.estimatedSpins=0;self.bet=0;self.betHits=0;self.balanceHits=0;self.hasBalance=NO;self.frameCount=0;self.fpsFrames=0;self.fps=0;self.lastTick=0;self.lastMotionStart=0;self.lastVisualCycle=0;self.lastBalanceCheck=0;self.lastFpsLog=0;self.previousMotion=nil;self.lastSymbol=@"";self.processing=NO;self.ocrBusy=NO;[self.snapshots removeAllObjects];[self.symbolImages removeAllObjects];for(NSString *k in self.counts.allKeys)self.counts[k]=@0;
+ if(self.running){self.running=NO;self.generation++;[self.timer invalidate];self.timer=nil;[self.snapshots removeAllObjects];self.processing=NO;self.ocrBusy=NO;[self log:@"AUTO STOPPED V26"];}
+ else {self.running=YES;self.generation++;self.motionStarts=0;self.motionStops=0;self.spinCandidates=0;self.ignoredOnsets=0;self.lastCandidateTime=0;self.motionActive=NO;self.motionQuiet=0;self.visualCycles=0;self.unknown=0;self.review=0;self.duplicates=0;self.estimatedSpins=0;self.balanceEvents=0;self.positiveBalanceEvents=0;self.positiveBalanceTotal=0;self.lastResultSnapshotTime=0;self.bet=0;self.betHits=0;self.balanceHits=0;self.hasBalance=NO;self.frameCount=0;self.fpsFrames=0;self.fps=0;self.lastTick=0;self.lastMotionStart=0;self.lastVisualCycle=0;self.lastBalanceCheck=0;self.lastFpsLog=0;self.previousMotion=nil;self.lastSymbol=@"";self.processing=NO;self.ocrBusy=NO;[self.snapshots removeAllObjects];[self.symbolImages removeAllObjects];for(NSString *k in self.counts.allKeys)self.counts[k]=@0;
   self.timer=[NSTimer scheduledTimerWithTimeInterval:.05 target:self selector:@selector(tick:) userInfo:nil repeats:YES];
-  [self log:@"AUTO STARTED V25 | CANDIDATE FILTER 0.65s + BALANCE"];[self log:@"SPIN CANDIDATES ARE NOT CONFIRMED SPINS"];[self log:@"BALANCE ESTIMATE IS NOT CONFIRMED SPINS"];
+  [self log:@"AUTO STARTED V26 | BALANCE PRIMARY ESTIMATE + MOTION DIAGNOSTICS"];[self log:@"SPIN CANDIDATES ARE NOT CONFIRMED SPINS"];[self log:@"BALANCE ESTIMATE IS NOT CONFIRMED SPINS"];
  }[self refresh];
 }
 - (void)copyLog {[self log:@"LOG COPIED"];UIPasteboard.generalPasteboard.string=[self.logs componentsJoinedByString:@"\n"];}
@@ -211,14 +213,14 @@
  if(!scene){dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{[self showPanel];});return;}
  CGFloat w=MIN(340,scene.coordinateSpace.bounds.size.width-20);self.panel=[[UIWindow alloc]initWithWindowScene:scene];self.panel.frame=CGRectMake(10,55,w,410);self.panel.windowLevel=UIWindowLevelAlert+1;
  UIViewController *vc=[UIViewController new];vc.view.backgroundColor=[UIColor colorWithRed:.06 green:.08 blue:.12 alpha:.96];vc.view.layer.cornerRadius=12;vc.view.clipsToBounds=YES;self.panel.rootViewController=vc;
- UILabel *title=[[UILabel alloc]initWithFrame:CGRectMake(10,5,w-20,26)];title.text=@"CMSCrystalLogger v25";title.textColor=UIColor.whiteColor;title.font=[UIFont boldSystemFontOfSize:15];title.userInteractionEnabled=YES;[title addGestureRecognizer:[[UIPanGestureRecognizer alloc]initWithTarget:self action:@selector(movePanel:)]];[vc.view addSubview:title];
- self.status=[[UILabel alloc]initWithFrame:CGRectMake(10,32,w-20,126)];self.status.numberOfLines=7;self.status.textColor=UIColor.systemGreenColor;self.status.font=[UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightMedium];self.status.adjustsFontSizeToFitWidth=YES;self.status.minimumScaleFactor=.7;[vc.view addSubview:self.status];
+ UILabel *title=[[UILabel alloc]initWithFrame:CGRectMake(10,5,w-20,26)];title.text=@"CMSCrystalLogger v26";title.textColor=UIColor.whiteColor;title.font=[UIFont boldSystemFontOfSize:15];title.userInteractionEnabled=YES;[title addGestureRecognizer:[[UIPanGestureRecognizer alloc]initWithTarget:self action:@selector(movePanel:)]];[vc.view addSubview:title];
+ self.status=[[UILabel alloc]initWithFrame:CGRectMake(10,32,w-20,126)];self.status.numberOfLines=8;self.status.textColor=UIColor.systemGreenColor;self.status.font=[UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightMedium];self.status.adjustsFontSizeToFitWidth=YES;self.status.minimumScaleFactor=.7;[vc.view addSubview:self.status];
  self.logView=[[UITextView alloc]initWithFrame:CGRectMake(8,160,w-16,110)];self.logView.backgroundColor=UIColor.clearColor;self.logView.textColor=UIColor.systemGreenColor;self.logView.font=[UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightRegular];self.logView.editable=NO;[vc.view addSubview:self.logView];
  CGFloat bw=(w-30)/3;
  [self button:@"AUTO" x:5 y:276 w:bw action:@selector(toggle) view:vc.view];[self button:@"COPY LOG" x:10+bw y:276 w:bw action:@selector(copyLog) view:vc.view];[self button:@"ROI SHOW" x:15+2*bw y:276 w:bw action:@selector(toggleMarker) view:vc.view];
  [self button:@"LEFT" x:5 y:311 w:bw action:@selector(left) view:vc.view];[self button:@"UP" x:10+bw y:311 w:bw action:@selector(up) view:vc.view];[self button:@"RIGHT" x:15+2*bw y:311 w:bw action:@selector(right) view:vc.view];
  [self button:@"TRIM5" x:5 y:346 w:bw action:@selector(toggleTrim) view:vc.view];[self button:@"DOWN" x:10+bw y:346 w:bw action:@selector(down) view:vc.view];[self button:@"RESET BAL" x:15+2*bw y:346 w:bw action:@selector(resetBalance) view:vc.view];
- self.panel.hidden=NO;[self.panel makeKeyAndVisible];[self markerUpdate];[self refresh];[self log:@"V25 READY"];
+ self.panel.hidden=NO;[self.panel makeKeyAndVisible];[self markerUpdate];[self refresh];[self log:@"V26 READY"];
 }
 - (void)start {dispatch_async(dispatch_get_main_queue(),^{[self showPanel];});}
 @end
