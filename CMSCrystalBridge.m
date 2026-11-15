@@ -1,13 +1,10 @@
 
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
-#import <CoreGraphics/CoreGraphics.h>
 #import <objc/runtime.h>
-#import <dlfcn.h>
-#import <mach-o/dyld.h>
 #import <dispatch/dispatch.h>
 
-#pragma mark - Window
+#pragma mark - CMSCrystalBridge v12
 
 @interface CMSBridgeWindow : UIWindow
 @property(nonatomic, weak) UIView *panel;
@@ -40,25 +37,29 @@
 
 @end
 
+#pragma mark - Globals
+
+static CMSBridgeWindow *gWindow = nil;
+
+@class CMSBridgePanel;
+static CMSBridgePanel *gPanel = nil;
+
+static void CMSRefresh(void);
+
 #pragma mark - Panel
 
 @interface CMSBridgePanel : UIView
 <UIGestureRecognizerDelegate>
 
-@property(nonatomic, strong) UIButton *toggleButton;
-@property(nonatomic, strong) UIButton *refreshButton;
-@property(nonatomic, strong) UIButton *dataButton;
-@property(nonatomic, strong) UITextView *details;
-@property(nonatomic, strong) UILabel *statusLabel;
-@property(nonatomic, copy) NSString *fullReport;
-@property(nonatomic, assign) BOOL expanded;
+@property(nonatomic,strong) UIButton *toggleButton;
+@property(nonatomic,strong) UIButton *refreshButton;
+@property(nonatomic,strong) UIButton *dataButton;
+@property(nonatomic,strong) UITextView *details;
+@property(nonatomic,strong) UILabel *statusLabel;
+@property(nonatomic,copy) NSString *fullReport;
+@property(nonatomic,assign) BOOL expanded;
 
 @end
-
-static CMSBridgeWindow *gWindow = nil;
-static CMSBridgePanel *gPanel = nil;
-
-static void CMSInspect(void);
 
 @implementation CMSBridgePanel
 
@@ -75,10 +76,10 @@ static void CMSInspect(void);
     self.layer.borderWidth = 1;
     self.layer.borderColor =
         UIColor.cyanColor.CGColor;
-    self.clipsToBounds = YES;
 
-    self.fullReport = @"";
+    self.clipsToBounds = YES;
     self.expanded = NO;
+    self.fullReport = @"";
 
     self.toggleButton =
         [UIButton buttonWithType:UIButtonTypeSystem];
@@ -87,7 +88,7 @@ static void CMSInspect(void);
         CGRectMake(0, 0, 190, 38);
 
     [self.toggleButton
-        setTitle:@"CMS Bridge v11 +"
+        setTitle:@"CMS Bridge v12 +"
         forState:UIControlStateNormal];
 
     [self.toggleButton
@@ -115,7 +116,7 @@ static void CMSInspect(void);
         UIColor.whiteColor;
 
     self.details.font =
-        [UIFont monospacedSystemFontOfSize:10
+        [UIFont monospacedSystemFontOfSize:11
             weight:UIFontWeightRegular];
 
     self.details.editable = NO;
@@ -140,7 +141,7 @@ static void CMSInspect(void);
     self.refreshButton.layer.cornerRadius = 8;
 
     [self.refreshButton
-        setTitle:@"UPPDATERA DATA"
+        setTitle:@"UPPDATERA RÄKNARE"
         forState:UIControlStateNormal];
 
     [self.refreshButton
@@ -257,20 +258,20 @@ static void CMSInspect(void);
 
     [self.toggleButton
         setTitle:self.expanded
-            ? @"CMS Bridge v11 -"
-            : @"CMS Bridge v11 +"
+            ? @"CMS Bridge v12 -"
+            : @"CMS Bridge v12 +"
         forState:UIControlStateNormal];
 }
 
 - (void)refreshData {
-    self.statusLabel.text = @"Läser data...";
-    CMSInspect();
+    self.statusLabel.text = @"Läser Logger...";
+    CMSRefresh();
 }
 
 - (void)exportData {
 
     if (self.fullReport.length == 0) {
-        self.statusLabel.text = @"Ingen data ännu";
+        self.statusLabel.text = @"Ingen data";
         return;
     }
 
@@ -365,6 +366,7 @@ static void CMSSetupPanel(void) {
     if (gPanel) return;
 
     UIWindowScene *scene = CMSForegroundScene();
+
     if (!scene) return;
 
     gWindow =
@@ -395,165 +397,24 @@ static void CMSSetupPanel(void) {
     gWindow.hidden = NO;
 }
 
-#pragma mark - Safe data helpers
+#pragma mark - Logger access
 
-static NSString *CMSTypeName(id object) {
-
-    if (!object) return @"nil";
-
-    return NSStringFromClass([object class]);
-}
-
-static NSString *CMSPreview(id object) {
-
-    if (!object) return @"nil";
-
-    if ([object isKindOfClass:NSString.class]) {
-
-        NSString *value = (NSString *)object;
-
-        if (value.length > 160) {
-            return [[value substringToIndex:160]
-                stringByAppendingString:@"..."];
-        }
-
-        return value;
-    }
-
-    if ([object isKindOfClass:NSNumber.class]) {
-        return [(NSNumber *)object stringValue];
-    }
-
-    if ([object isKindOfClass:NSNull.class]) {
-        return @"NSNull";
-    }
-
-    if ([object isKindOfClass:NSArray.class]) {
-
-        return [NSString stringWithFormat:
-            @"Array count=%lu",
-            (unsigned long)[(NSArray *)object count]];
-    }
-
-    if ([object isKindOfClass:NSDictionary.class]) {
-
-        return [NSString stringWithFormat:
-            @"Dictionary count=%lu",
-            (unsigned long)[(NSDictionary *)object count]];
-    }
-
-    return @"(object preview skipped)";
-}
-
-static void CMSDescribeArray(
-    NSString *name,
-    id object,
-    NSMutableString *report) {
-
-    [report appendFormat:
-        @"\n=== %@ ===\nCLASS: %@\n",
-        name,
-        CMSTypeName(object)];
-
-    if (![object isKindOfClass:NSArray.class]) {
-        [report appendString:@"NOT ARRAY\n"];
-        return;
-    }
-
-    NSArray *array = (NSArray *)object;
-
-    [report appendFormat:
-        @"COUNT: %lu\n",
-        (unsigned long)array.count];
-
-    NSUInteger limit = MIN(array.count, 12);
-
-    for (NSUInteger i = 0; i < limit; i++) {
-
-        id item = array[i];
-
-        [report appendFormat:
-            @"[%lu] %@ | %@\n",
-            (unsigned long)i,
-            CMSTypeName(item),
-            CMSPreview(item)];
-
-        if ([item isKindOfClass:NSArray.class]) {
-
-            NSArray *nested = (NSArray *)item;
-
-            NSUInteger nestedLimit =
-                MIN(nested.count, 8);
-
-            for (NSUInteger j = 0;
-                 j < nestedLimit;
-                 j++) {
-
-                id value = nested[j];
-
-                [report appendFormat:
-                    @"    [%lu] %@ | %@\n",
-                    (unsigned long)j,
-                    CMSTypeName(value),
-                    CMSPreview(value)];
-            }
-        }
-    }
-
-    if (array.count > limit) {
-        [report appendFormat:
-            @"... %lu fler poster\n",
-            (unsigned long)(array.count - limit)];
-    }
-}
-
-#pragma mark - Widget discovery
-
-static void CMSFindWidgets(
-    UIView *view,
-    Class targetClass,
-    NSMutableArray *results,
-    NSUInteger depth) {
-
-    if (!view || depth > 30 ||
-        results.count >= 10) {
-        return;
-    }
-
-    if ([view isKindOfClass:targetClass]) {
-        [results addObject:view];
-    }
-
-    for (UIView *child in view.subviews) {
-
-        CMSFindWidgets(
-            child,
-            targetClass,
-            results,
-            depth + 1
-        );
-
-        if (results.count >= 10) {
-            break;
-        }
-    }
-}
-
-static id CMSReadProperty(
-    id object,
-    NSString *propertyName) {
+static id CMSReadObject(id object, NSString *name) {
 
     if (!object) return nil;
 
-    SEL selector =
-        NSSelectorFromString(propertyName);
+    SEL selector = NSSelectorFromString(name);
 
-    if (![object respondsToSelector:selector]) {
+    NSMethodSignature *signature =
+        [object methodSignatureForSelector:selector];
+
+    if (!signature ||
+        signature.numberOfArguments != 2 ||
+        signature.methodReturnType[0] != '@') {
+
         return nil;
     }
 
-    // Only object-returning, zero-argument getters
-    // confirmed in the v10 runtime report.
     IMP implementation =
         [object methodForSelector:selector];
 
@@ -565,174 +426,300 @@ static id CMSReadProperty(
     return getter(object, selector);
 }
 
-#pragma mark - Inspection
+static BOOL CMSReadInteger(
+    id object,
+    NSString *name,
+    long long *value) {
 
-static void CMSInspect(void) {
+    if (!object || !value) return NO;
+
+    SEL selector = NSSelectorFromString(name);
+
+    NSMethodSignature *signature =
+        [object methodSignatureForSelector:selector];
+
+    if (!signature ||
+        signature.numberOfArguments != 2) {
+
+        return NO;
+    }
+
+    const char *type = signature.methodReturnType;
+
+    if (!type || (type[0] != 'q' &&
+                  type[0] != 'Q')) {
+
+        return NO;
+    }
+
+    IMP implementation =
+        [object methodForSelector:selector];
+
+    if (!implementation) return NO;
+
+    long long (*getter)(id, SEL) =
+        (long long (*)(id, SEL))implementation;
+
+    *value = getter(object, selector);
+
+    return YES;
+}
+
+static id CMSFindLogger(void) {
+
+    Class loggerClass =
+        objc_getClass("CMSCrystalLogger");
+
+    if (!loggerClass) return nil;
+
+    return CMSReadObject(
+        loggerClass,
+        @"shared"
+    );
+}
+
+#pragma mark - Formatting
+
+static NSString *CMSValue(id value) {
+
+    if (!value) return @"nil";
+
+    if ([value isKindOfClass:NSString.class]) {
+        return value;
+    }
+
+    if ([value isKindOfClass:NSNumber.class]) {
+        return [value stringValue];
+    }
+
+    return NSStringFromClass([value class]);
+}
+
+static NSString *CMSCount(
+    NSDictionary *counts,
+    NSString *symbol) {
+
+    if (!counts) return @"N/A";
+
+    id value = counts[symbol];
+
+    if (!value) return @"0";
+
+    return CMSValue(value);
+}
+
+static void CMSAppendLogs(
+    NSMutableString *report,
+    id logsObject) {
+
+    [report appendString:
+        @"\n=== LOGGER LOGS ===\n"];
+
+    if (![logsObject isKindOfClass:NSArray.class]) {
+
+        [report appendFormat:
+            @"TYPE: %@\n",
+            logsObject
+                ? NSStringFromClass([logsObject class])
+                : @"nil"];
+
+        return;
+    }
+
+    NSArray *logs = [(NSArray *)logsObject copy];
+
+    [report appendFormat:
+        @"COUNT: %lu\n",
+        (unsigned long)logs.count];
+
+    NSUInteger limit = MIN(logs.count, 15);
+
+    NSUInteger start = logs.count - limit;
+
+    for (NSUInteger i = start;
+         i < logs.count;
+         i++) {
+
+        NSString *line = CMSValue(logs[i]);
+
+        if (line.length > 240) {
+            line = [[line substringToIndex:240]
+                stringByAppendingString:@"..."];
+        }
+
+        [report appendFormat:
+            @"[%lu] %@\n",
+            (unsigned long)i,
+            line];
+    }
+}
+
+#pragma mark - Main inspection
+
+static void CMSRefresh(void) {
 
     CMSSetupPanel();
 
     NSMutableString *report =
         [NSMutableString stringWithString:
-            @"CMSCrystalBridge v11\n"
-             "READ-ONLY LIVE SNAPSHOT\n\n"];
+            @"CMSCrystalBridge v12\n"
+             "LOGGER LIVE COUNTER\n\n"];
+
+    Class loggerClass =
+        objc_getClass("CMSCrystalLogger");
 
     [report appendFormat:
-        @"LADDADE BILDER: %u\n",
-        _dyld_image_count()];
+        @"LOGGER CLASS: %@\n",
+        loggerClass ? @"FOUND" : @"NOT FOUND"];
 
-    const char *symbols[] = {
-        "RS_GetTripleHistoryForSymbol",
-        "RS_ResetTripleHistoryForSymbol",
-        "RS_ResetTripleHistory",
-        "RS_GetTargetSpinSymbol",
-        "RS_SetTargetSpinSymbol"
-    };
-
-    NSUInteger foundSymbols = 0;
-
-    for (NSUInteger i = 0; i < 5; i++) {
-
-        if (dlsym(RTLD_DEFAULT, symbols[i])) {
-            foundSymbols++;
-        }
-    }
-
-    [report appendFormat:
-        @"RS SYMBOLS: %lu/5\n",
-        (unsigned long)foundSymbols];
-
-    Class targetClass =
-        objc_getClass("VIPCronologiaWidget");
-
-    if (!targetClass) {
+    if (!loggerClass) {
 
         [report appendString:
-            @"VIPCronologiaWidget: NOT FOUND\n"];
+            @"\nCMSCrystalLogger is not loaded.\n"
+             "Install and load Logger dylib.\n"];
 
     } else {
 
-        [report appendString:
-            @"VIPCronologiaWidget: FOUND\n"];
-
-        NSMutableArray *widgets =
-            [NSMutableArray array];
-
-        UIWindowScene *scene =
-            CMSForegroundScene();
-
-        if (scene) {
-
-            for (UIWindow *window in scene.windows) {
-
-                if (window == gWindow) {
-                    continue;
-                }
-
-                CMSFindWidgets(
-                    window,
-                    targetClass,
-                    widgets,
-                    0
-                );
-            }
-        }
+        id logger = CMSFindLogger();
 
         [report appendFormat:
-            @"ACTIVE WIDGETS: %lu\n",
-            (unsigned long)widgets.count];
+            @"LOGGER INSTANCE: %@\n",
+            logger ? @"FOUND" : @"NOT FOUND"];
 
-        NSUInteger index = 0;
+        if (logger) {
 
-        for (id widget in widgets) {
+            id countsObject =
+                CMSReadObject(logger, @"counts");
 
-            [report appendFormat:
-                @"\n========== WIDGET %lu ==========\n",
-                (unsigned long)index];
+            id lastSymbol =
+                CMSReadObject(logger, @"lastSymbol");
 
-            id columnData =
-                CMSReadProperty(widget, @"columnData");
+            id logs =
+                CMSReadObject(logger, @"logs");
 
-            id columnCountLabels =
-                CMSReadProperty(
-                    widget,
-                    @"columnCountLabels"
-                );
+            NSDictionary *counts = nil;
 
-            id columnCards =
-                CMSReadProperty(widget, @"columnCards");
+            if ([countsObject
+                    isKindOfClass:NSDictionary.class]) {
 
-            CMSDescribeArray(
-                @"columnData",
-                columnData,
-                report
-            );
-
-            CMSDescribeArray(
-                @"columnCountLabels",
-                columnCountLabels,
-                report
-            );
-
-            CMSDescribeArray(
-                @"columnCards",
-                columnCards,
-                report
-            );
-
-            if ([columnCountLabels
-                    isKindOfClass:NSArray.class]) {
-
-                NSArray *labels =
-                    (NSArray *)columnCountLabels;
-
-                [report appendString:
-                    @"\n=== LABEL TEXT ===\n"];
-
-                NSUInteger limit =
-                    MIN(labels.count, 20);
-
-                for (NSUInteger i = 0;
-                     i < limit;
-                     i++) {
-
-                    id item = labels[i];
-
-                    if ([item
-                            isKindOfClass:UILabel.class]) {
-
-                        UILabel *label =
-                            (UILabel *)item;
-
-                        [report appendFormat:
-                            @"[%lu] %@\n",
-                            (unsigned long)i,
-                            label.text ?: @"(empty)"];
-                    } else {
-
-                        [report appendFormat:
-                            @"[%lu] NOT UILabel: %@\n",
-                            (unsigned long)i,
-                            CMSTypeName(item)];
-                    }
-                }
+                counts =
+                    [(NSDictionary *)countsObject copy];
             }
 
-            index++;
+            [report appendString:
+                @"\n=== SYMBOL COUNTER ===\n"];
+
+            [report appendFormat:
+                @"ATTACK: %@\n",
+                CMSCount(counts, @"ATTACK")];
+
+            [report appendFormat:
+                @"STEAL: %@\n",
+                CMSCount(counts, @"STEAL")];
+
+            [report appendFormat:
+                @"SHIELD: %@\n",
+                CMSCount(counts, @"SHIELD")];
+
+            [report appendFormat:
+                @"POINT: %@\n",
+                CMSCount(counts, @"POINT")];
+
+            [report appendFormat:
+                @"\nLAST SYMBOL: %@\n",
+                CMSValue(lastSymbol)];
+
+            if (counts) {
+
+                [report appendString:
+                    @"\n=== ALL COUNT KEYS ===\n"];
+
+                NSArray *keys =
+                    [[counts allKeys]
+                        sortedArrayUsingComparator:
+                        ^NSComparisonResult(
+                            id a, id b) {
+
+                            return [[a description]
+                                compare:[b description]];
+                        }];
+
+                for (id key in keys) {
+
+                    [report appendFormat:
+                        @"%@: %@\n",
+                        CMSValue(key),
+                        CMSValue(counts[key])];
+                }
+
+            } else {
+
+                [report appendString:
+                    @"COUNTS: NOT DICTIONARY\n"];
+            }
+
+            long long estimatedSpins = 0;
+            long long spinCandidates = 0;
+
+            BOOL hasEstimated =
+                CMSReadInteger(
+                    logger,
+                    @"estimatedSpins",
+                    &estimatedSpins
+                );
+
+            BOOL hasCandidates =
+                CMSReadInteger(
+                    logger,
+                    @"spinCandidates",
+                    &spinCandidates
+                );
+
+            [report appendString:
+                @"\n=== SPIN DATA ===\n"];
+
+            if (hasEstimated) {
+
+                [report appendFormat:
+                    @"ESTIMATED SPINS: %lld\n",
+                    estimatedSpins];
+
+            } else {
+
+                [report appendString:
+                    @"ESTIMATED SPINS: N/A\n"];
+            }
+
+            if (hasCandidates) {
+
+                [report appendFormat:
+                    @"SPIN CANDIDATES: %lld\n",
+                    spinCandidates];
+
+            } else {
+
+                [report appendString:
+                    @"SPIN CANDIDATES: N/A\n"];
+            }
+
+            CMSAppendLogs(report, logs);
         }
     }
 
     [report appendString:
         @"\n=== STATUS ===\n"
-         "Snapshot only\n"
-         "No game state modifications\n"
+         "Logger read-only snapshot\n"
+         "No Logger counters modified\n"
          "No RS functions called\n"
+         "Raid stack not yet verified\n"
          "AutoSpeed unchanged\n"];
 
-    NSLog(@"[CMSBridgeV11] %@", report);
+    NSLog(@"[CMSBridgeV12] %@", report);
 
     if (gPanel) {
 
         gPanel.fullReport = [report copy];
+
         gPanel.details.text = report;
 
         [gPanel.details
@@ -744,14 +731,14 @@ static void CMSInspect(void) {
             forState:UIControlStateNormal];
 
         gPanel.statusLabel.text =
-            @"Snapshot klar";
+            @"Logger snapshot klar";
     }
 }
 
 #pragma mark - Startup
 
 __attribute__((constructor))
-static void CMSBridgeV11Start(void) {
+static void CMSBridgeV12Start(void) {
 
     dispatch_async(
         dispatch_get_main_queue(), ^{
@@ -767,7 +754,7 @@ static void CMSBridgeV11Start(void) {
                         NSEC_PER_SEC),
                 dispatch_get_main_queue(), ^{
 
-                    CMSInspect();
+                    CMSRefresh();
                 });
         }
     });
