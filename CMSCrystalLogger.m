@@ -7,7 +7,7 @@
 #import <stdlib.h>
 
 typedef NS_ENUM(NSInteger, CMSWheelState) {
-    CMSWheelStateReady = 0,
+    CMSWheelStateReady,
     CMSWheelStateMoving,
     CMSWheelStateSettling
 };
@@ -15,7 +15,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 @interface CMSCrystalLogger : NSObject
 
 @property(nonatomic,strong) UIWindow *panel;
-@property(nonatomic,strong) UIView *panelView;
+@property(nonatomic,strong) UIView *contentView;
 @property(nonatomic,strong) UITextView *logView;
 
 @property(nonatomic,strong) UILabel *statusLabel;
@@ -28,7 +28,6 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
 @property(nonatomic,strong) NSTimer *motionTimer;
 @property(nonatomic,strong) NSTimer *ocrTimer;
-
 @property(nonatomic,strong) NSMutableArray<NSString *> *events;
 
 @property(nonatomic,assign) BOOL running;
@@ -38,6 +37,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 @property(nonatomic,assign) BOOL trimFive;
 @property(nonatomic,assign) BOOL hasBalance;
 
+@property(nonatomic,assign) NSUInteger generation;
 @property(nonatomic,assign) NSInteger launchAttempts;
 @property(nonatomic,assign) NSInteger motionFrames;
 @property(nonatomic,assign) NSInteger ocrFrames;
@@ -64,15 +64,14 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 @property(nonatomic,assign) double motionScore;
 @property(nonatomic,assign) NSTimeInterval lastMotionTime;
 @property(nonatomic,assign) NSTimeInterval lastCycleTime;
+@property(nonatomic,assign) NSTimeInterval lastFPSCheck;
+@property(nonatomic,assign) NSInteger framesAtFPSCheck;
+@property(nonatomic,assign) double actualFPS;
 
 @property(nonatomic,copy) NSData *previousPixels;
 @property(nonatomic,copy) NSString *topCandidate;
-@property(nonatomic,copy) NSString *pendingTop;
-@property(nonatomic,assign) NSInteger topStreak;
 
 @property(nonatomic,assign) CGFloat balanceY;
-@property(nonatomic,assign) CGFloat balanceW;
-@property(nonatomic,assign) CGFloat topY;
 @property(nonatomic,assign) CGFloat wheelY;
 
 + (instancetype)shared;
@@ -89,15 +88,10 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
     dispatch_once(&once, ^{
         instance = [CMSCrystalLogger new];
         instance.events = [NSMutableArray new];
-
         instance.trimFive = YES;
         instance.balanceY = 0.828;
-        instance.balanceW = 0.23;
-        instance.topY = 0.20;
         instance.wheelY = 0.34;
-
         instance.topCandidate = @"";
-        instance.pendingTop = @"";
         instance.wheelState = CMSWheelStateReady;
     });
 
@@ -132,21 +126,11 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
     if (self.logView) {
         self.logView.text = all;
-
-        if (all.length)
+        if (all.length > 0) {
             [self.logView scrollRangeToVisible:
                 NSMakeRange(all.length - 1, 1)];
+        }
     }
-
-    NSString *path =
-        [NSTemporaryDirectory()
-            stringByAppendingPathComponent:
-                @"CMSCrystalV17.log"];
-
-    [all writeToFile:path
-           atomically:YES
-             encoding:NSUTF8StringEncoding
-                error:nil];
 
     NSLog(@"[CMSCrystalV17] %@", line);
 }
@@ -183,9 +167,9 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
     self.betLabel.text =
         self.bet > 0 ?
             [NSString stringWithFormat:
-                @"BET x%ld",
+                @"CURRENT BET x%ld",
                 (long)self.bet] :
-            @"BET WAITING";
+            @"CURRENT BET WAITING";
 
     self.spinsLabel.text =
         [NSString stringWithFormat:
@@ -196,7 +180,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
     self.wheelLabel.text =
         [NSString stringWithFormat:
-            @"WHEEL: %@ | %.1f%%",
+            @"WHEEL %@ | MOTION %.1f%%",
             [self wheelStateName],
             self.motionScore * 100.0];
 
@@ -208,13 +192,13 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
     self.speedLabel.text =
         [NSString stringWithFormat:
-            @"FRAMES %ld | OCR %ld | TRIM5 %@",
-            (long)self.motionFrames,
+            @"ACTUAL %.1f FPS | OCR %ld | TRIM5 %@",
+            self.actualFPS,
             (long)self.ocrFrames,
             self.trimFive ? @"ON" : @"OFF"];
 }
 
-#pragma mark - Game window
+#pragma mark - Capture
 
 - (UIWindow *)gameWindow {
     UIWindow *best = nil;
@@ -246,9 +230,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
 - (UIImage *)capture {
     UIWindow *window = [self gameWindow];
-
-    if (!window)
-        return nil;
+    if (!window) return nil;
 
     UIGraphicsImageRendererFormat *format =
         [UIGraphicsImageRendererFormat defaultFormat];
@@ -277,14 +259,13 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
                 w:(CGFloat)w
                 h:(CGFloat)h {
 
-    if (!image)
-        return NULL;
+    if (!image) return NULL;
 
     CGFloat iw = CGImageGetWidth(image);
     CGFloat ih = CGImageGetHeight(image);
 
-    CGRect rect = CGRectMake(
-        iw*x, ih*y, iw*w, ih*h);
+    CGRect rect =
+        CGRectMake(iw*x, ih*y, iw*w, ih*h);
 
     rect = CGRectIntersection(
         rect, CGRectMake(0,0,iw,ih));
@@ -296,11 +277,10 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         image, CGRectIntegral(rect));
 }
 
-#pragma mark - Fast motion analysis
+#pragma mark - Motion
 
 - (NSData *)motionPixels:(CGImageRef)image {
-    if (!image)
-        return nil;
+    if (!image) return nil;
 
     const size_t width = 48;
     const size_t height = 32;
@@ -323,8 +303,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
     CGColorSpaceRelease(space);
 
-    if (!context)
-        return nil;
+    if (!context) return nil;
 
     CGContextSetInterpolationQuality(
         context, kCGInterpolationLow);
@@ -350,8 +329,9 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
     double sum = 0;
 
-    for (NSUInteger i=0; i<a.length; i++)
+    for (NSUInteger i=0; i<a.length; i++) {
         sum += abs((int)pa[i] - (int)pb[i]);
+    }
 
     return sum / (a.length * 255.0);
 }
@@ -381,15 +361,13 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
     self.previousPixels = pixels;
 
-    if (score < 0)
-        return;
+    if (score < 0) return;
 
     self.motionScore = score;
 
     NSTimeInterval now =
         [NSDate date].timeIntervalSince1970;
 
-    // Tunable thresholds.
     BOOL moving = score > 0.065;
     BOOL stable = score < 0.022;
 
@@ -422,7 +400,6 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
                 self.wheelState = CMSWheelStateSettling;
                 self.settleFrames = 0;
-
                 [self log:@"WHEEL APPEARS STOPPED"];
             }
             break;
@@ -444,26 +421,49 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
                             @"OBSERVED CYCLE #%ld",
                             (long)self.observedCycles]];
 
-                        [self log:
-                            @"CYCLE IS IMAGE-BASED, NOT VERIFIED"];
+                        [self requestResultScan];
                     }
 
                     self.wheelState = CMSWheelStateReady;
                     self.movingFrames = 0;
                     self.stableFrames = 0;
-
-                    [self requestResultScan];
                 }
             }
             break;
     }
 }
 
+- (void)updateFPS {
+    NSTimeInterval now =
+        [NSDate date].timeIntervalSince1970;
+
+    if (self.lastFPSCheck == 0) {
+        self.lastFPSCheck = now;
+        self.framesAtFPSCheck = self.motionFrames;
+        return;
+    }
+
+    NSTimeInterval elapsed =
+        now - self.lastFPSCheck;
+
+    if (elapsed >= 2.0) {
+        NSInteger frames =
+            self.motionFrames - self.framesAtFPSCheck;
+
+        self.actualFPS = frames / elapsed;
+        self.lastFPSCheck = now;
+        self.framesAtFPSCheck = self.motionFrames;
+
+        [self log:[NSString stringWithFormat:
+            @"ACTUAL MOTION FPS: %.1f",
+            self.actualFPS]];
+    }
+}
+
 #pragma mark - OCR
 
 - (NSArray *)ocr:(CGImageRef)image {
-    if (!image)
-        return @[];
+    if (!image) return @[];
 
     VNRecognizeTextRequest *request =
         [VNRecognizeTextRequest new];
@@ -492,8 +492,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         VNRecognizedText *text =
             [[obs topCandidates:1] firstObject];
 
-        if (!text)
-            continue;
+        if (!text) continue;
 
         [result addObject:@{
             @"text":text.string,
@@ -645,7 +644,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
     return confidence >= 0.75 ? best : @"";
 }
 
-#pragma mark - Bet and balance
+#pragma mark - Balance and bet
 
 - (void)processBet:(NSInteger)value {
     if (value <= 0) {
@@ -672,8 +671,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 }
 
 - (long long)normalizeBalance:(long long)raw {
-    if (raw < 0)
-        return -1;
+    if (raw < 0) return -1;
 
     if (self.trimFive &&
         raw >= 1000000 &&
@@ -768,7 +766,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         @"UNCLASSIFIED DELTA %+lld",delta]];
 }
 
-#pragma mark - Screen state
+#pragma mark - Screen detection
 
 - (void)processVisibility:(BOOL)visible {
     if (visible) {
@@ -796,7 +794,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
     }
 }
 
-#pragma mark - Fast motion timer
+#pragma mark - Fast wheel scanning
 
 - (void)motionTick:(NSTimer *)timer {
     if (!self.running ||
@@ -834,12 +832,13 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
     self.motionFrames++;
 
     [self processMotion:pixels];
+    [self updateFPS];
 
     if (self.motionFrames % 10 == 0)
         [self refresh];
 }
 
-#pragma mark - OCR timer
+#pragma mark - Balance OCR
 
 - (void)ocrTick:(NSTimer *)timer {
     if (!self.running || self.ocrBusy)
@@ -858,7 +857,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         [self crop:image.CGImage
                 x:0.39
                 y:self.balanceY
-                w:self.balanceW
+                w:0.23
                 h:0.036];
 
     CGImageRef betImage =
@@ -874,6 +873,8 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         self.ocrBusy = NO;
         return;
     }
+
+    NSUInteger scanGeneration = self.generation;
 
     dispatch_async(
         dispatch_get_global_queue(
@@ -892,7 +893,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
             long long rawBalance =
                 [self readRawBalance:balanceTexts];
 
-            NSInteger bet =
+            NSInteger currentBet =
                 [self readBet:betTexts];
 
             NSString *rawBal =
@@ -906,16 +907,17 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
                 self.ocrBusy = NO;
 
-                if (!self.running)
+                if (!self.running ||
+                    scanGeneration != self.generation)
                     return;
 
                 self.ocrFrames++;
 
                 [self processVisibility:
-                    (rawBalance >= 0 || bet > 0)];
+                    (rawBalance >= 0 || currentBet > 0)];
 
                 if (self.gameVisible) {
-                    [self processBet:bet];
+                    [self processBet:currentBet];
                     [self processBalance:rawBalance];
                 }
 
@@ -925,11 +927,6 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
                     [self log:[NSString stringWithFormat:
                         @"BET OCR RAW: %@",rawBet]];
-
-                    [self log:[NSString stringWithFormat:
-                        @"MOTION %.3f | STATE %@",
-                        self.motionScore,
-                        [self wheelStateName]]];
                 }
 
                 [self refresh];
@@ -941,8 +938,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 #pragma mark - Result OCR
 
 - (void)requestResultScan {
-    if (!self.running ||
-        !self.gameVisible)
+    if (!self.running || !self.gameVisible)
         return;
 
     UIImage *image = [self capture];
@@ -953,33 +949,31 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
     CGImageRef topImage =
         [self crop:image.CGImage
                 x:0.20
-                y:self.topY
+                y:0.20
                 w:0.60
                 h:0.12];
 
     if (!topImage)
         return;
 
+    NSUInteger scanGeneration = self.generation;
+
     dispatch_async(
         dispatch_get_global_queue(
             QOS_CLASS_USER_INITIATED,0), ^{
         @autoreleasepool {
 
-            NSArray *items =
-                [self ocr:topImage];
-
+            NSArray *items = [self ocr:topImage];
             CGImageRelease(topImage);
 
-            NSString *result =
-                [self readTop:items];
-
-            NSString *raw =
-                [self raw:items];
+            NSString *result = [self readTop:items];
+            NSString *raw = [self raw:items];
 
             dispatch_async(
                 dispatch_get_main_queue(), ^{
 
-                if (!self.running)
+                if (!self.running ||
+                    scanGeneration != self.generation)
                     return;
 
                 [self log:[NSString stringWithFormat:
@@ -992,8 +986,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
                         @"POSSIBLE RESULT: %@",
                         result]];
                 } else {
-                    [self log:
-                        @"RESULT UNKNOWN"];
+                    [self log:@"RESULT UNKNOWN"];
                 }
 
                 [self refresh];
@@ -1026,6 +1019,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 - (void)toggle {
     if (self.running) {
         self.running = NO;
+        self.generation++;
 
         [self.motionTimer invalidate];
         [self.ocrTimer invalidate];
@@ -1036,6 +1030,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         [self log:@"AUTO STOPPED"];
     } else {
         self.running = YES;
+        self.generation++;
 
         self.motionFrames = 0;
         self.ocrFrames = 0;
@@ -1051,8 +1046,10 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         self.missingCount = 0;
 
         self.topCandidate = @"";
-        self.pendingTop = @"";
-        self.topStreak = 0;
+        self.lastFPSCheck = 0;
+        self.framesAtFPSCheck = 0;
+        self.actualFPS = 0;
+        self.lastCycleTime = 0;
 
         [self resetMotion];
         [self resetBalance];
@@ -1071,9 +1068,9 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
                                            userInfo:nil
                                             repeats:YES];
 
-        [self log:@"AUTO STARTED - V17"];
-        [self log:@"FAST MOTION TARGET 20 FPS"];
-        [self log:@"OCR TARGET EVERY 600 MS"];
+        [self log:@"AUTO STARTED - V17 FAST"];
+        [self log:@"MOTION TARGET 20 FPS"];
+        [self log:@"OCR TARGET 600 MS"];
 
         [self ocrTick:nil];
     }
@@ -1089,30 +1086,26 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 }
 
 - (void)balanceUp {
-    self.balanceY =
-        MAX(0.70,self.balanceY-0.01);
+    self.balanceY = MAX(0.70,self.balanceY-0.01);
     [self resetBalance];
+    [self log:@"BALANCE AREA UP"];
 }
 
 - (void)balanceDown {
-    self.balanceY =
-        MIN(0.90,self.balanceY+0.01);
+    self.balanceY = MIN(0.90,self.balanceY+0.01);
     [self resetBalance];
+    [self log:@"BALANCE AREA DOWN"];
 }
 
 - (void)wheelUp {
-    self.wheelY =
-        MAX(0.15,self.wheelY-0.02);
+    self.wheelY = MAX(0.15,self.wheelY-0.02);
     [self resetMotion];
-
     [self log:@"WHEEL AREA UP"];
 }
 
 - (void)wheelDown {
-    self.wheelY =
-        MIN(0.65,self.wheelY+0.02);
+    self.wheelY = MIN(0.65,self.wheelY+0.02);
     [self resetMotion];
-
     [self log:@"WHEEL AREA DOWN"];
 }
 
@@ -1126,15 +1119,12 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
     UILabel *label =
         [[UILabel alloc] initWithFrame:frame];
 
-    label.font =
-        [UIFont boldSystemFontOfSize:size];
-
+    label.font = [UIFont boldSystemFontOfSize:size];
     label.textColor = color;
     label.adjustsFontSizeToFitWidth = YES;
     label.minimumScaleFactor = 0.7;
 
     [parent addSubview:label];
-
     return label;
 }
 
@@ -1176,7 +1166,6 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         [gesture translationInView:self.panel];
 
     CGRect frame = self.panel.frame;
-
     frame.origin.x += point.x;
     frame.origin.y += point.y;
 
@@ -1198,20 +1187,20 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         if ([s isKindOfClass:[UIWindowScene class]] &&
             s.activationState ==
                 UISceneActivationStateForegroundActive) {
-
             scene = (UIWindowScene *)s;
             break;
         }
     }
 
     if (!scene) {
-        if (++self.launchAttempts < 60)
+        if (++self.launchAttempts < 60) {
             dispatch_after(
                 dispatch_time(DISPATCH_TIME_NOW,
                     NSEC_PER_SEC),
                 dispatch_get_main_queue(), ^{
                     [self showPanel];
                 });
+        }
         return;
     }
 
@@ -1228,8 +1217,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
     self.panel.windowLevel =
         UIWindowLevelAlert+1;
 
-    UIViewController *vc =
-        [UIViewController new];
+    UIViewController *vc = [UIViewController new];
 
     vc.view.backgroundColor =
         [UIColor colorWithRed:0.06
@@ -1243,14 +1231,12 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
     self.panel.rootViewController = vc;
 
     UILabel *title =
-        [self label:
-            CGRectMake(12,8,width-24,28)
+        [self label:CGRectMake(12,8,width-24,28)
                   font:16
                  color:UIColor.whiteColor
                 parent:vc.view];
 
     title.text = @"CMSCrystalLogger v17 FAST";
-
     title.userInteractionEnabled = YES;
 
     [title addGestureRecognizer:
@@ -1304,18 +1290,14 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         [[UITextView alloc] initWithFrame:
             CGRectMake(10,240,width-20,98)];
 
-    self.logView.backgroundColor =
-        UIColor.clearColor;
-
-    self.logView.textColor =
-        UIColor.systemGreenColor;
+    self.logView.backgroundColor = UIColor.clearColor;
+    self.logView.textColor = UIColor.systemGreenColor;
 
     self.logView.font =
         [UIFont monospacedSystemFontOfSize:10
                                    weight:UIFontWeightRegular];
 
     self.logView.editable = NO;
-
     [vc.view addSubview:self.logView];
 
     CGFloat gap = 6;
@@ -1369,10 +1351,10 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
     [self refresh];
 
     [self log:@"V17 READY"];
-    [self log:@"FAST MOTION TRACKER ENABLED"];
-    [self log:@"SEPARATE MOTION AND OCR TIMERS"];
-    [self log:@"20 FPS IS TARGET, NOT GUARANTEED"];
-    [self log:@"RESULTS REMAIN UNCONFIRMED"];
+    [self log:@"FAST WHEEL DETECTION ENABLED"];
+    [self log:@"MOTION AND OCR SEPARATED"];
+    [self log:@"ACTUAL FPS MONITOR ENABLED"];
+    [self log:@"RESULTS ARE NOT YET CONFIRMED"];
 }
 
 - (void)start {
