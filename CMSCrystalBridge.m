@@ -8,9 +8,13 @@
 #import <dispatch/dispatch.h>
 #import <stdlib.h>
 
-// CMSCrystalBridge v7
-// Read-only runtime diagnostics.
-// Does not call unknown CMSCrystal functions.
+//
+// CMSCrystalBridge v8
+// Read-only Objective-C runtime diagnostics.
+//
+// No calls to unknown game functions.
+// No modifications to game memory or history.
+//
 
 static const char *const kSymbols[] = {
     "RS_GetTripleHistoryForSymbol",
@@ -20,7 +24,7 @@ static const char *const kSymbols[] = {
     "RS_SetTargetSpinSymbol"
 };
 
-#pragma mark - Touch pass-through window
+#pragma mark - Pass-through window
 
 @interface CMSBridgeWindow : UIWindow
 @property(nonatomic, weak) UIView *panel;
@@ -83,7 +87,6 @@ static const char *const kSymbols[] = {
             UIColor.cyanColor.CGColor;
 
         self.clipsToBounds = YES;
-
         self.expanded = NO;
 
         self.toggle =
@@ -94,7 +97,7 @@ static const char *const kSymbols[] = {
             CGRectMake(0, 0, 190, 38);
 
         [self.toggle
-            setTitle:@"CMS Bridge v7 +"
+            setTitle:@"CMS Bridge v8 +"
             forState:UIControlStateNormal];
 
         [self.toggle
@@ -129,6 +132,7 @@ static const char *const kSymbols[] = {
 
         self.details.editable = NO;
         self.details.selectable = YES;
+        self.details.scrollEnabled = YES;
         self.details.hidden = YES;
 
         [self addSubview:self.details];
@@ -137,6 +141,8 @@ static const char *const kSymbols[] = {
             [[UIPanGestureRecognizer alloc]
                 initWithTarget:self
                 action:@selector(drag:)];
+
+        pan.cancelsTouchesInView = NO;
 
         [self addGestureRecognizer:pan];
     }
@@ -181,30 +187,28 @@ static const char *const kSymbols[] = {
     [self.toggle
         setTitle:
             self.expanded
-                ? @"CMS Bridge v7 −"
-                : @"CMS Bridge v7 +"
+                ? @"CMS Bridge v8 -"
+                : @"CMS Bridge v8 +"
         forState:UIControlStateNormal];
 }
 
 - (void)drag:(UIPanGestureRecognizer *)gesture {
 
-    UIView *parent = self.superview;
-
-    if (!parent) return;
+    if (!self.superview) return;
 
     CGPoint delta =
-        [gesture translationInView:parent];
+        [gesture translationInView:self.superview];
 
     CGRect frame = self.frame;
 
     CGFloat maxX =
         MAX(0,
-            parent.bounds.size.width -
+            self.superview.bounds.size.width -
             frame.size.width);
 
     CGFloat maxY =
         MAX(0,
-            parent.bounds.size.height -
+            self.superview.bounds.size.height -
             frame.size.height);
 
     frame.origin.x =
@@ -217,8 +221,26 @@ static const char *const kSymbols[] = {
 
     self.frame = frame;
 
-    [gesture setTranslation:CGPointZero
-                    inView:parent];
+    [gesture setTranslation:
+        CGPointZero
+        inView:self.superview];
+}
+
+- (BOOL)gestureRecognizerShouldBegin:
+    (UIGestureRecognizer *)gestureRecognizer {
+
+    if ([gestureRecognizer isKindOfClass:
+            UIPanGestureRecognizer.class]) {
+
+        CGPoint point =
+            [gestureRecognizer locationInView:self];
+
+        // Only drag using the title bar.
+        // Allow normal scrolling in the text view.
+        return point.y <= 38;
+    }
+
+    return YES;
 }
 
 @end
@@ -230,18 +252,15 @@ static CMSBridgePanel *gPanel = nil;
 
 static UIWindowScene *CMSForegroundScene(void) {
 
-    if (@available(iOS 13.0, *)) {
+    for (UIScene *scene in
+         UIApplication.sharedApplication.connectedScenes) {
 
-        for (UIScene *scene in
-            UIApplication.sharedApplication.connectedScenes) {
+        if ([scene isKindOfClass:
+                UIWindowScene.class] &&
+            scene.activationState ==
+                UISceneActivationStateForegroundActive) {
 
-            if ([scene isKindOfClass:
-                    UIWindowScene.class] &&
-                scene.activationState ==
-                    UISceneActivationStateForegroundActive) {
-
-                return (UIWindowScene *)scene;
-            }
+            return (UIWindowScene *)scene;
         }
     }
 
@@ -289,10 +308,284 @@ static void CMSSetupPanel(void) {
     gWindow.hidden = NO;
 }
 
-#pragma mark - Runtime metadata inspection
+#pragma mark - Helpers
 
-static void CMSInspectHistoryStorage(
+static NSString *CMSString(const char *value) {
+
+    if (!value) return @"?";
+
+    NSString *result =
+        [NSString stringWithUTF8String:value];
+
+    return result ?: @"?";
+}
+
+static BOOL CMSInterestingName(NSString *name) {
+
+    NSString *lower = name.lowercaseString;
+
+    NSArray<NSString *> *terms = @[
+        @"history",
+        @"symbol",
+        @"column",
+        @"count",
+        @"refresh",
+        @"raid",
+        @"spin",
+        @"triple",
+        @"load",
+        @"update"
+    ];
+
+    for (NSString *term in terms) {
+
+        if ([lower containsString:term]) {
+            return YES;
+        }
+    }
+
+    return NO;
+}
+
+#pragma mark - Property metadata
+
+static void CMSInspectProperties(
+    Class cls,
     NSMutableString *report) {
+
+    unsigned int count = 0;
+
+    objc_property_t *properties =
+        class_copyPropertyList(cls, &count);
+
+    [report appendFormat:
+        @"\nEgenskaper: %u\n", count];
+
+    for (unsigned int i = 0; i < count; i++) {
+
+        NSString *name =
+            CMSString(property_getName(properties[i]));
+
+        NSString *attributes =
+            CMSString(property_getAttributes(properties[i]));
+
+        [report appendFormat:
+            @"%@\n  %@\n",
+            name,
+            attributes];
+    }
+
+    free(properties);
+}
+
+#pragma mark - Instance variable metadata
+
+static void CMSInspectIvars(
+    Class cls,
+    NSMutableString *report) {
+
+    unsigned int count = 0;
+
+    Ivar *ivars =
+        class_copyIvarList(cls, &count);
+
+    [report appendFormat:
+        @"\nInstansvariabler: %u\n", count];
+
+    for (unsigned int i = 0; i < count; i++) {
+
+        NSString *name =
+            CMSString(ivar_getName(ivars[i]));
+
+        NSString *type =
+            CMSString(ivar_getTypeEncoding(ivars[i]));
+
+        [report appendFormat:
+            @"%@ : %@\n", name, type];
+    }
+
+    free(ivars);
+}
+
+#pragma mark - Method metadata
+
+static void CMSInspectMethods(
+    Class cls,
+    NSMutableString *report) {
+
+    unsigned int count = 0;
+
+    Method *methods =
+        class_copyMethodList(cls, &count);
+
+    [report appendFormat:
+        @"\nMetoder totalt: %u\n", count];
+
+    NSUInteger matches = 0;
+
+    [report appendString:
+        @"\nRelevanta metoder:\n"];
+
+    for (unsigned int i = 0; i < count; i++) {
+
+        Method method = methods[i];
+
+        SEL selector =
+            method_getName(method);
+
+        NSString *name =
+            NSStringFromSelector(selector);
+
+        if (!CMSInterestingName(name)) {
+            continue;
+        }
+
+        matches++;
+
+        NSString *encoding =
+            CMSString(method_getTypeEncoding(method));
+
+        unsigned int arguments =
+            method_getNumberOfArguments(method);
+
+        [report appendFormat:
+            @"\n%@\n"
+             "Typ: %@\n"
+             "Argument inkl self/_cmd: %u\n",
+            name,
+            encoding,
+            arguments];
+
+        // Inspect method signature only.
+        // Do not invoke the method.
+
+        for (unsigned int a = 0;
+             a < arguments;
+             a++) {
+
+            char *argumentType =
+                method_copyArgumentType(method, a);
+
+            [report appendFormat:
+                @"  arg%u: %@\n",
+                a,
+                CMSString(argumentType)];
+
+            free(argumentType);
+        }
+
+        char *returnType =
+            method_copyReturnType(method);
+
+        [report appendFormat:
+            @"  return: %@\n",
+            CMSString(returnType)];
+
+        free(returnType);
+    }
+
+    [report appendFormat:
+        @"\nMatchande metoder: %lu\n",
+        (unsigned long)matches];
+
+    free(methods);
+}
+
+#pragma mark - Class hierarchy
+
+static void CMSInspectHierarchy(
+    Class cls,
+    NSMutableString *report) {
+
+    [report appendString:
+        @"\nKlasshierarki:\n"];
+
+    Class current = cls;
+
+    NSUInteger depth = 0;
+
+    while (current && depth < 12) {
+
+        [report appendFormat:
+            @"%lu: %@\n",
+            (unsigned long)depth,
+            CMSString(class_getName(current))];
+
+        current = class_getSuperclass(current);
+
+        depth++;
+    }
+}
+
+#pragma mark - Symbol ownership
+
+static void CMSInspectSymbols(
+    NSMutableString *report) {
+
+    NSUInteger found = 0;
+
+    NSMutableSet<NSString *> *owners =
+        [NSMutableSet set];
+
+    [report appendString:
+        @"=== EXPORTERADE FUNKTIONER ===\n"];
+
+    for (NSUInteger i = 0; i < 5; i++) {
+
+        void *address =
+            dlsym(RTLD_DEFAULT, kSymbols[i]);
+
+        NSString *owner = @"unknown";
+
+        if (address) {
+
+            found++;
+
+            Dl_info info = {0};
+
+            if (dladdr(address, &info) &&
+                info.dli_fname) {
+
+                NSString *path =
+                    CMSString(info.dli_fname);
+
+                owner = path.lastPathComponent;
+
+                [owners addObject:owner];
+            }
+        }
+
+        [report appendFormat:
+            @"%lu: %@ %@\n",
+            (unsigned long)(i + 1),
+            address ? @"FOUND" : @"MISSING",
+            address ? owner : @""];
+    }
+
+    [report appendFormat:
+        @"\nSymboler: %lu/5\n"
+         "Samma bibliotek: %@\n",
+        (unsigned long)found,
+        (found == 5 && owners.count == 1)
+            ? @"JA" : @"NEJ"];
+}
+
+#pragma mark - Main diagnostics
+
+static void CMSInspect(void) {
+
+    CMSSetupPanel();
+
+    NSMutableString *report =
+        [NSMutableString stringWithString:
+            @"CMS Bridge v8\n"
+             "SKRIVSKYDDAD ANALYS\n\n"];
+
+    [report appendFormat:
+        @"Laddade bilder: %u\n\n",
+        _dyld_image_count()];
+
+    CMSInspectSymbols(report);
 
     Class cls =
         objc_getClass("VIPCronologiaWidget");
@@ -302,146 +595,51 @@ static void CMSInspectHistoryStorage(
         [report appendString:
             @"\nVIPCronologiaWidget: NOT FOUND\n"];
 
-        return;
+    } else {
+
+        [report appendString:
+            @"\nVIPCronologiaWidget: FOUND\n"];
+
+        CMSInspectHierarchy(cls, report);
+
+        CMSInspectProperties(cls, report);
+
+        CMSInspectIvars(cls, report);
+
+        CMSInspectMethods(cls, report);
     }
 
     [report appendString:
-        @"\n=== V7 HISTORIKANALYS ===\n"];
+        @"\n=== STATUS ===\n"
+         "Endast runtime-metadata\n"
+         "Inga okända metoder anropas\n"
+         "Inga historikvärden läses\n"
+         "Raid stack: ej ansluten\n"
+         "AutoSpeed: oförändrad\n"];
 
-    unsigned int propertyCount = 0;
-
-    objc_property_t *properties =
-        class_copyPropertyList(
-            cls,
-            &propertyCount);
-
-    [report appendFormat:
-        @"\nEgenskaper: %u\n",
-        propertyCount];
-
-    for (unsigned int i = 0;
-         i < propertyCount;
-         i++) {
-
-        const char *name =
-            property_getName(properties[i]);
-
-        const char *attributes =
-            property_getAttributes(properties[i]);
-
-        [report appendFormat:
-            @"%s\n  %s\n",
-            name ? name : "?",
-            attributes ? attributes : "?"];
-    }
-
-    free(properties);
-
-    unsigned int ivarCount = 0;
-
-    Ivar *ivars =
-        class_copyIvarList(
-            cls,
-            &ivarCount);
-
-    [report appendFormat:
-        @"\nInstansvariabler: %u\n",
-        ivarCount];
-
-    for (unsigned int i = 0;
-         i < ivarCount;
-         i++) {
-
-        const char *name =
-            ivar_getName(ivars[i]);
-
-        const char *type =
-            ivar_getTypeEncoding(ivars[i]);
-
-        [report appendFormat:
-            @"%s : %s\n",
-            name ? name : "?",
-            type ? type : "?"];
-    }
-
-    free(ivars);
-
-    [report appendString:
-        @"\nEndast metadata\n"
-         "Inga historikfunktioner anropas\n"
-         "Raid stack: ej ansluten\n"];
-}
-
-#pragma mark - Diagnostics
-
-static void CMSInspect(void) {
-
-    CMSSetupPanel();
-
-    NSMutableString *report =
-        [NSMutableString stringWithString:
-            @"CMS Bridge v7\n"
-             "Skrivskyddad analys\n\n"];
-
-    NSUInteger found = 0;
-
-    NSMutableSet<NSString *> *owners =
-        [NSMutableSet set];
-
-    for (NSUInteger i = 0; i < 5; i++) {
-
-        void *address =
-            dlsym(RTLD_DEFAULT, kSymbols[i]);
-
-        if (!address) continue;
-
-        found++;
-
-        Dl_info info = {0};
-
-        if (dladdr(address, &info) &&
-            info.dli_fname) {
-
-            NSString *path =
-                [NSString stringWithUTF8String:
-                    info.dli_fname];
-
-            if (path) {
-                [owners addObject:
-                    path.lastPathComponent];
-            }
-        }
-    }
-
-    [report appendFormat:
-        @"C-funktioner: %lu/5\n"
-         "Laddade bilder: %u\n"
-         "Ägare: %@\n",
-        (unsigned long)found,
-        _dyld_image_count(),
-        [[owners.allObjects
-            sortedArrayUsingSelector:
-                @selector(compare:)]
-            componentsJoinedByString:@", "]];
-
-    CMSInspectHistoryStorage(report);
-
-    NSLog(@"[CMSBridgeV7] %@", report);
+    NSLog(@"[CMSBridgeV8] %@", report);
 
     if (gPanel) {
+
         gPanel.details.text = report;
+
+        [gPanel.details
+            setContentOffset:CGPointZero
+            animated:NO];
     }
 }
 
 #pragma mark - Startup
 
 __attribute__((constructor))
-static void CMSBridgeV7Start(void) {
+static void CMSBridgeV8Start(void) {
 
     dispatch_async(
         dispatch_get_main_queue(), ^{
 
-        const int delays[] = {3, 10, 25};
+        const int delays[] = {
+            3, 10, 25
+        };
 
         for (unsigned i = 0; i < 3; i++) {
 
