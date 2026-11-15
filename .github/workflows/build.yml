@@ -1,5 +1,5 @@
 
-name: Build CMSCrystalLogger
+name: Build CMSCrystalLogger and Bridge
 
 on:
   push:
@@ -12,10 +12,16 @@ jobs:
     runs-on: macos-15
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build dylib
+      - name: Check source files
+        run: |
+          ls -la
+          test -f CMSCrystalLogger.m
+          test -f CMSCrystalBridge.m
+
+      - name: Build CMSCrystalLogger
         run: |
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 
@@ -31,16 +37,33 @@ jobs:
             -framework CoreGraphics \
             -framework Vision \
             -install_name @rpath/CMSCrystalLogger.dylib \
-            CMSCrystalLogger.m \
-            -o CMSCrystalLogger.dylib
+            -o CMSCrystalLogger.dylib \
+            CMSCrystalLogger.m
 
-      - name: Verify
+      - name: Build CMSCrystalBridge
         run: |
-          file CMSCrystalLogger.dylib
-          ls -lh CMSCrystalLogger.dylib
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 
-      - name: Upload dylib
+          clang \
+            -arch arm64 \
+            -isysroot "$SDK" \
+            -miphoneos-version-min=15.0 \
+            -fobjc-arc \
+            -O2 \
+            -dynamiclib \
+            -framework Foundation \
+            -install_name @rpath/CMSCrystalBridge.dylib \
+            -o CMSCrystalBridge.dylib \
+            CMSCrystalBridge.m
+
+      - name: Upload CMSCrystalLogger
         uses: actions/upload-artifact@v4
         with:
-          name: CMSCrystalLogger-v10
+          name: CMSCrystalLogger
           path: CMSCrystalLogger.dylib
+
+      - name: Upload CMSCrystalBridge
+        uses: actions/upload-artifact@v4
+        with:
+          name: CMSCrystalBridge
+          path: CMSCrystalBridge.dylib
