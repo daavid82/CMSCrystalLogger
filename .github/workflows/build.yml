@@ -53,6 +53,7 @@ jobs:
             -dynamiclib \
             -framework Foundation \
             -framework UIKit \
+            -framework CoreGraphics \
             -install_name @rpath/CMSCrystalBridge.dylib \
             -o CMSCrystalBridge.dylib \
             CMSCrystalBridge.m
@@ -62,9 +63,11 @@ jobs:
         with:
           name: CMSCrystalLogger
           path: CMSCrystalLogger.dylib
+          if-no-files-found: error
 
       - name: Upload CMSCrystalBridge
         uses: actions/upload-artifact@v4
         with:
           name: CMSCrystalBridge
           path: CMSCrystalBridge.dylib
+          if-no-files-found: error
