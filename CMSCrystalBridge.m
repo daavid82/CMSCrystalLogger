@@ -6,7 +6,9 @@
 #import <dispatch/dispatch.h>
 #import <string.h>
 
-static const char * const kSymbols[] = {
+#pragma mark - Symbols
+
+static const char *kSymbols[] = {
     "RS_GetTripleHistoryForSymbol",
     "RS_ResetTripleHistoryForSymbol",
     "RS_ResetTripleHistory",
@@ -14,222 +16,415 @@ static const char * const kSymbols[] = {
     "RS_SetTargetSpinSymbol"
 };
 
+static const NSUInteger kSymbolCount = 5;
+
+#pragma mark - Pass-through window
+
+@interface CMSPassWindow : UIWindow
+@property(nonatomic, weak) UIView *touchPanel;
+@end
+
+@implementation CMSPassWindow
+
+- (UIView *)hitTest:(CGPoint)point
+          withEvent:(UIEvent *)event {
+
+    UIView *panel = self.touchPanel;
+
+    if (!panel || panel.hidden) {
+        return nil;
+    }
+
+    CGPoint localPoint =
+        [panel convertPoint:point fromView:self];
+
+    if (![panel pointInside:localPoint withEvent:event]) {
+        return nil;
+    }
+
+    return [super hitTest:point withEvent:event];
+}
+
+@end
+
+#pragma mark - Diagnostic panel
+
 @interface CMSBridgePanel : UIView
-@property(nonatomic,strong) UILabel *statusLabel;
-@property(nonatomic,strong) UIButton *toggleButton;
-@property(nonatomic,assign) BOOL expanded;
+
+@property(nonatomic, strong) UILabel *statusLabel;
+@property(nonatomic, strong) UIButton *toggleButton;
+@property(nonatomic, assign) BOOL expanded;
+
+- (void)updateReport:(NSString *)report;
+
 @end
 
 @implementation CMSBridgePanel
 
 - (instancetype)initWithFrame:(CGRect)frame {
-    if ((self = [super initWithFrame:frame])) {
+
+    self = [super initWithFrame:frame];
+
+    if (self) {
+
+        self.expanded = NO;
+
         self.backgroundColor =
-            [[UIColor blackColor] colorWithAlphaComponent:0.85];
-        self.layer.cornerRadius = 12;
-        self.layer.borderColor =
-            [UIColor colorWithRed:0.30
-                            green:0.75
-                             blue:0.95
-                            alpha:1].CGColor;
+            [[UIColor blackColor]
+                colorWithAlphaComponent:0.88];
+
+        self.layer.cornerRadius = 10;
         self.layer.borderWidth = 1;
+
+        self.layer.borderColor =
+            [UIColor cyanColor].CGColor;
+
         self.clipsToBounds = YES;
-        self.expanded = YES;
-
-        UILabel *title =
-            [[UILabel alloc] initWithFrame:CGRectMake(12, 8, 270, 24)];
-        title.text = @"CMSCrystal Bridge v3 · Diagnostik";
-        title.textColor = UIColor.whiteColor;
-        title.font = [UIFont boldSystemFontOfSize:14];
-        [self addSubview:title];
-
-        self.statusLabel =
-            [[UILabel alloc] initWithFrame:CGRectMake(12, 37, 280, 180)];
-        self.statusLabel.textColor = UIColor.whiteColor;
-        self.statusLabel.font =
-            [UIFont monospacedSystemFontOfSize:11
-                                       weight:UIFontWeightRegular];
-        self.statusLabel.numberOfLines = 0;
-        self.statusLabel.text = @"Väntar på första kontrollen…";
-        [self addSubview:self.statusLabel];
 
         self.toggleButton =
-            [UIButton buttonWithType:UIButtonTypeSystem];
-        self.toggleButton.frame = CGRectMake(280, 4, 32, 32);
-        [self.toggleButton setTitle:@"−"
-                          forState:UIControlStateNormal];
-        [self.toggleButton setTitleColor:UIColor.whiteColor
-                               forState:UIControlStateNormal];
-        [self.toggleButton addTarget:self
-                              action:@selector(toggle)
-                    forControlEvents:UIControlEventTouchUpInside];
+            [UIButton buttonWithType:
+                UIButtonTypeSystem];
+
+        self.toggleButton.frame =
+            CGRectMake(0, 0, 180, 38);
+
+        [self.toggleButton
+            setTitle:@"CMS Bridge v4  +"
+            forState:UIControlStateNormal];
+
+        [self.toggleButton
+            setTitleColor:UIColor.whiteColor
+            forState:UIControlStateNormal];
+
+        self.toggleButton.titleLabel.font =
+            [UIFont boldSystemFontOfSize:13];
+
+        [self.toggleButton
+            addTarget:self
+            action:@selector(togglePanel)
+            forControlEvents:
+                UIControlEventTouchUpInside];
+
         [self addSubview:self.toggleButton];
+
+        self.statusLabel =
+            [[UILabel alloc]
+                initWithFrame:
+                    CGRectMake(10, 43, 300, 225)];
+
+        self.statusLabel.textColor =
+            UIColor.whiteColor;
+
+        self.statusLabel.font =
+            [UIFont monospacedSystemFontOfSize:10
+                weight:UIFontWeightRegular];
+
+        self.statusLabel.numberOfLines = 0;
+        self.statusLabel.lineBreakMode =
+            NSLineBreakByTruncatingTail;
+
+        self.statusLabel.text =
+            @"Väntar på diagnostik...";
+
+        self.statusLabel.hidden = YES;
+
+        [self addSubview:self.statusLabel];
 
         UIPanGestureRecognizer *pan =
             [[UIPanGestureRecognizer alloc]
                 initWithTarget:self
-                        action:@selector(drag:)];
+                action:@selector(dragPanel:)];
+
         [self addGestureRecognizer:pan];
     }
+
     return self;
 }
 
-- (void)toggle {
+- (void)togglePanel {
+
     self.expanded = !self.expanded;
-    CGRect f = self.frame;
-    f.size.height = self.expanded ? 226 : 38;
-    self.frame = f;
-    self.statusLabel.hidden = !self.expanded;
+
+    CGRect frame = self.frame;
+
+    frame.size.width =
+        self.expanded ? 324 : 180;
+
+    frame.size.height =
+        self.expanded ? 280 : 38;
+
+    self.frame = frame;
+
+    self.statusLabel.hidden =
+        !self.expanded;
+
     [self.toggleButton
-        setTitle:self.expanded ? @"−" : @"+"
+        setTitle:
+            self.expanded
+                ? @"CMS Bridge v4  −"
+                : @"CMS Bridge v4  +"
         forState:UIControlStateNormal];
 }
 
-- (void)drag:(UIPanGestureRecognizer *)gesture {
-    CGPoint p = [gesture translationInView:self.superview];
-    self.center = CGPointMake(
-        self.center.x + p.x,
-        self.center.y + p.y
-    );
+- (void)dragPanel:
+    (UIPanGestureRecognizer *)gesture {
+
+    UIView *parent = self.superview;
+
+    if (!parent) return;
+
+    CGPoint delta =
+        [gesture translationInView:parent];
+
+    CGRect frame = self.frame;
+
+    frame.origin.x += delta.x;
+    frame.origin.y += delta.y;
+
+    frame.origin.x =
+        MAX(0,
+            MIN(frame.origin.x,
+                parent.bounds.size.width -
+                frame.size.width));
+
+    frame.origin.y =
+        MAX(0,
+            MIN(frame.origin.y,
+                parent.bounds.size.height -
+                frame.size.height));
+
+    self.frame = frame;
+
     [gesture setTranslation:CGPointZero
-                    inView:self.superview];
+                    inView:parent];
 }
+
+- (void)updateReport:(NSString *)report {
+
+    self.statusLabel.text = report;
+}
+
 @end
 
-static CMSBridgePanel *gPanel;
-static UIWindow *gOverlayWindow;
+#pragma mark - Globals
 
-static UIWindowScene *ActiveScene(void) {
+static CMSPassWindow *gWindow = nil;
+static CMSBridgePanel *gPanel = nil;
+
+#pragma mark - Window setup
+
+static UIWindowScene *CMSActiveScene(void) {
+
     if (@available(iOS 13.0, *)) {
-        for (UIScene *scene in
-             UIApplication.sharedApplication.connectedScenes) {
-            if ([scene isKindOfClass:UIWindowScene.class] &&
-                scene.activationState ==
-                    UISceneActivationStateForegroundActive)
-                return (UIWindowScene *)scene;
-        }
 
         for (UIScene *scene in
-             UIApplication.sharedApplication.connectedScenes) {
-            if ([scene isKindOfClass:UIWindowScene.class])
+            UIApplication.sharedApplication.connectedScenes) {
+
+            if ([scene isKindOfClass:
+                    UIWindowScene.class] &&
+                scene.activationState ==
+                    UISceneActivationStateForegroundActive) {
+
                 return (UIWindowScene *)scene;
+            }
         }
     }
+
     return nil;
 }
 
-static void ShowPanel(void) {
+static void CMSCreatePanel(void) {
+
     if (gPanel) return;
 
-    UIWindowScene *scene = ActiveScene();
+    UIWindowScene *scene =
+        CMSActiveScene();
+
     if (!scene) return;
 
-    if (@available(iOS 13.0, *)) {
-        gOverlayWindow =
-            [[UIWindow alloc] initWithWindowScene:scene];
-    } else {
-        gOverlayWindow =
-            [[UIWindow alloc]
-                initWithFrame:UIScreen.mainScreen.bounds];
-    }
+    gWindow =
+        [[CMSPassWindow alloc]
+            initWithWindowScene:scene];
 
-    gOverlayWindow.frame = scene.coordinateSpace.bounds;
-    gOverlayWindow.windowLevel = UIWindowLevelAlert + 10;
+    gWindow.frame =
+        scene.coordinateSpace.bounds;
 
-    UIViewController *root = [UIViewController new];
-    root.view.backgroundColor = UIColor.clearColor;
-    gOverlayWindow.rootViewController = root;
-    gOverlayWindow.hidden = NO;
+    gWindow.windowLevel =
+        UIWindowLevelAlert + 10;
 
-    // Separat fönster kan fånga pekningar utanför panelen.
+    UIViewController *controller =
+        [UIViewController new];
+
+    controller.view.backgroundColor =
+        UIColor.clearColor;
+
+    controller.view.userInteractionEnabled =
+        YES;
+
+    gWindow.rootViewController =
+        controller;
+
     gPanel =
         [[CMSBridgePanel alloc]
-            initWithFrame:CGRectMake(12, 90, 324, 226)];
-    [root.view addSubview:gPanel];
+            initWithFrame:
+                CGRectMake(12, 90, 180, 38)];
+
+    [controller.view addSubview:gPanel];
+
+    gWindow.touchPanel = gPanel;
+
+    // Do not call makeKeyAndVisible.
+    // Keep the game's existing key window.
+    gWindow.hidden = NO;
 }
 
-static void Probe(unsigned attempt) {
-    NSMutableArray<NSString *> *originals =
+#pragma mark - Diagnostics
+
+static NSString *CMSShortName(const char *path) {
+
+    if (!path) return @"Unknown";
+
+    NSString *name =
+        [NSString stringWithUTF8String:path];
+
+    return name.lastPathComponent ?: @"Unknown";
+}
+
+static void CMSProbe(unsigned attempt) {
+
+    NSMutableArray<NSString *> *libraries =
         [NSMutableArray array];
 
-    for (uint32_t i = 0; i < _dyld_image_count(); ++i) {
-        const char *path = _dyld_get_image_name(i);
+    NSMutableArray<NSString *> *candidates =
+        [NSMutableArray array];
 
-        if (path &&
-            strstr(path, "CMSCrystal") &&
-            !strstr(path, "CMSCrystalBridge") &&
-            !strstr(path, "CMSCrystalLogger")) {
-            [originals addObject:
-                [[NSString stringWithUTF8String:path]
-                    lastPathComponent]];
+    uint32_t count = _dyld_image_count();
+
+    for (uint32_t i = 0; i < count; i++) {
+
+        const char *path =
+            _dyld_get_image_name(i);
+
+        if (!path) continue;
+
+        NSString *name =
+            CMSShortName(path);
+
+        [libraries addObject:name];
+
+        NSString *lower =
+            name.lowercaseString;
+
+        if ([lower containsString:@"crystal"] ||
+            [lower containsString:@"god"] ||
+            [lower containsString:@"inject"]) {
+
+            [candidates addObject:name];
         }
+    }
+
+    NSMutableString *report =
+        [NSMutableString stringWithFormat:
+            @"Kontroll: %u\n"
+             "Laddade bilder: %u\n\n",
+            attempt,
+            count];
+
+    [report appendString:
+        @"Möjliga bibliotek:\n"];
+
+    NSUInteger shown =
+        MIN(candidates.count, (NSUInteger)6);
+
+    for (NSUInteger i = 0; i < shown; i++) {
+
+        [report appendFormat:
+            @"%@\n", candidates[i]];
+    }
+
+    if (candidates.count == 0) {
+
+        [report appendString:
+            @"Inga namnmatchningar\n"];
     }
 
     NSUInteger found = 0;
 
-    NSMutableString *report =
-        [NSMutableString stringWithFormat:
-            @"Kontroll %u\nOriginal: %@\n",
-            attempt,
-            originals.count
-                ? [originals componentsJoinedByString:@", "]
-                : @"NOT LOADED"];
+    [report appendString:
+        @"\nHistorikfunktioner:\n"];
 
-    for (size_t i = 0;
-         i < sizeof(kSymbols) / sizeof(kSymbols[0]);
-         ++i) {
+    for (NSUInteger i = 0;
+         i < kSymbolCount;
+         i++) {
 
-        void *addr = dlsym(RTLD_DEFAULT, kSymbols[i]);
+        void *address =
+            dlsym(RTLD_DEFAULT, kSymbols[i]);
+
         Dl_info info = {0};
 
-        const char *owner =
-            (addr && dladdr(addr, &info) && info.dli_fname)
-                ? info.dli_fname
-                : NULL;
+        NSString *owner = @"";
 
-        BOOL correctOwner =
-            owner &&
-            strstr(owner, "CMSCrystal") &&
-            !strstr(owner, "CMSCrystalBridge");
+        if (address &&
+            dladdr(address, &info) &&
+            info.dli_fname) {
 
-        if (addr && correctOwner) found++;
+            owner =
+                CMSShortName(info.dli_fname);
+        }
+
+        if (address) {
+            found++;
+        }
 
         [report appendFormat:
-            @"%zu. %@ %@\n",
-            i + 1,
-            addr && correctOwner ? @"FOUND" : @"NOT FOUND",
-            @(kSymbols[i])];
+            @"%lu: %@ %@\n",
+            (unsigned long)(i + 1),
+            address ? @"FOUND" : @"NOT FOUND",
+            address ? owner : @""];
     }
 
     [report appendFormat:
-        @"\nFunktioner: %lu/5\nEndast läsning – inga anrop",
+        @"\nSymboler: %lu/5\n"
+         "Inga spelanrop",
         (unsigned long)found];
 
-    NSLog(@"[CMSBridgeV3] %@", report);
+    NSLog(@"[CMSBridgeV4] %@", report);
 
-    ShowPanel();
+    CMSCreatePanel();
 
     if (gPanel) {
-        gPanel.statusLabel.text = report;
+        [gPanel updateReport:report];
     }
+
+    // Detailed image names are printed to
+    // the system log for later diagnostics.
+    NSLog(@"[CMSBridgeV4] Loaded images: %@",
+          [libraries componentsJoinedByString:@", "]);
 }
 
-__attribute__((constructor))
-static void InitCMSBridgeV3(void) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        const int delays[] = {3, 8, 20, 40};
+#pragma mark - Startup
 
-        for (unsigned i = 0; i < 4; ++i) {
+__attribute__((constructor))
+static void CMSBridgeV4Start(void) {
+
+    dispatch_async(
+        dispatch_get_main_queue(), ^{
+
+        const int delays[] = {
+            3, 8, 20, 40
+        };
+
+        for (unsigned i = 0; i < 4; i++) {
+
             dispatch_after(
                 dispatch_time(
                     DISPATCH_TIME_NOW,
-                    (int64_t)delays[i] * NSEC_PER_SEC
-                ),
-                dispatch_get_main_queue(),
-                ^{
-                    Probe(i + 1);
-                }
-            );
+                    (int64_t)delays[i] *
+                        NSEC_PER_SEC),
+                dispatch_get_main_queue(), ^{
+
+                    CMSProbe(i + 1);
+                });
         }
     });
 }
