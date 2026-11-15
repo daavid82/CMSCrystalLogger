@@ -6,26 +6,11 @@
 #import <dlfcn.h>
 #import <mach-o/dyld.h>
 #import <dispatch/dispatch.h>
-#import <stdlib.h>
 
-// CMSCrystalBridge v10
-// Read-only diagnostics.
-// No game methods are called or modified.
-
-static const char *const kSymbols[] = {
-    "RS_GetTripleHistoryForSymbol",
-    "RS_ResetTripleHistoryForSymbol",
-    "RS_ResetTripleHistory",
-    "RS_GetTargetSpinSymbol",
-    "RS_SetTargetSpinSymbol"
-};
-
-#pragma mark - Pass-through window
+#pragma mark - Window
 
 @interface CMSBridgeWindow : UIWindow
-
 @property(nonatomic, weak) UIView *panel;
-
 @end
 
 @implementation CMSBridgeWindow
@@ -35,97 +20,93 @@ static const char *const kSymbols[] = {
 
     UIView *panel = self.panel;
 
-    if (!panel || panel.hidden) {
-        return nil;
-    }
+    if (!panel || panel.hidden) return nil;
 
     CGPoint local =
         [panel convertPoint:point fromView:self];
 
-    if (![panel pointInside:local withEvent:event]) {
+    if (![panel pointInside:local withEvent:event])
         return nil;
-    }
 
     UIView *hit =
         [super hitTest:point withEvent:event];
 
     if (hit == self ||
-        hit == self.rootViewController.view) {
+        hit == self.rootViewController.view)
         return nil;
-    }
 
     return hit;
 }
 
 @end
 
-#pragma mark - Diagnostic panel
+#pragma mark - Panel
 
 @interface CMSBridgePanel : UIView
-    <UIGestureRecognizerDelegate>
+<UIGestureRecognizerDelegate>
 
-@property(nonatomic, strong) UITextView *details;
-@property(nonatomic, strong) UIButton *toggle;
+@property(nonatomic, strong) UIButton *toggleButton;
+@property(nonatomic, strong) UIButton *refreshButton;
 @property(nonatomic, strong) UIButton *dataButton;
+@property(nonatomic, strong) UITextView *details;
 @property(nonatomic, strong) UILabel *statusLabel;
 @property(nonatomic, copy) NSString *fullReport;
 @property(nonatomic, assign) BOOL expanded;
 
 @end
 
+static CMSBridgeWindow *gWindow = nil;
+static CMSBridgePanel *gPanel = nil;
+
+static void CMSInspect(void);
+
 @implementation CMSBridgePanel
 
 - (instancetype)initWithFrame:(CGRect)frame {
 
     self = [super initWithFrame:frame];
-
-    if (!self) {
-        return nil;
-    }
+    if (!self) return nil;
 
     self.backgroundColor =
         [[UIColor blackColor]
-            colorWithAlphaComponent:0.92];
+            colorWithAlphaComponent:0.94];
 
     self.layer.cornerRadius = 10;
     self.layer.borderWidth = 1;
     self.layer.borderColor =
         UIColor.cyanColor.CGColor;
-
     self.clipsToBounds = YES;
-    self.expanded = NO;
+
     self.fullReport = @"";
+    self.expanded = NO;
 
-    self.toggle =
-        [UIButton buttonWithType:
-            UIButtonTypeSystem];
+    self.toggleButton =
+        [UIButton buttonWithType:UIButtonTypeSystem];
 
-    self.toggle.frame =
+    self.toggleButton.frame =
         CGRectMake(0, 0, 190, 38);
 
-    [self.toggle
-        setTitle:@"CMS Bridge v10 +"
+    [self.toggleButton
+        setTitle:@"CMS Bridge v11 +"
         forState:UIControlStateNormal];
 
-    [self.toggle
+    [self.toggleButton
         setTitleColor:UIColor.whiteColor
         forState:UIControlStateNormal];
 
-    self.toggle.titleLabel.font =
+    self.toggleButton.titleLabel.font =
         [UIFont boldSystemFontOfSize:13];
 
-    [self.toggle
+    [self.toggleButton
         addTarget:self
         action:@selector(togglePanel)
-        forControlEvents:
-            UIControlEventTouchUpInside];
+        forControlEvents:UIControlEventTouchUpInside];
 
-    [self addSubview:self.toggle];
+    [self addSubview:self.toggleButton];
 
     self.details =
         [[UITextView alloc]
-            initWithFrame:
-                CGRectMake(8, 42, 308, 225)];
+            initWithFrame:CGRectMake(8, 43, 308, 205)];
 
     self.details.backgroundColor =
         UIColor.clearColor;
@@ -144,12 +125,42 @@ static const char *const kSymbols[] = {
 
     [self addSubview:self.details];
 
+    self.refreshButton =
+        [UIButton buttonWithType:UIButtonTypeSystem];
+
+    self.refreshButton.frame =
+        CGRectMake(12, 255, 300, 40);
+
+    self.refreshButton.backgroundColor =
+        [UIColor colorWithRed:0.10
+                        green:0.35
+                         blue:0.65
+                        alpha:1.0];
+
+    self.refreshButton.layer.cornerRadius = 8;
+
+    [self.refreshButton
+        setTitle:@"UPPDATERA DATA"
+        forState:UIControlStateNormal];
+
+    [self.refreshButton
+        setTitleColor:UIColor.whiteColor
+        forState:UIControlStateNormal];
+
+    [self.refreshButton
+        addTarget:self
+        action:@selector(refreshData)
+        forControlEvents:UIControlEventTouchUpInside];
+
+    self.refreshButton.hidden = YES;
+
+    [self addSubview:self.refreshButton];
+
     self.dataButton =
-        [UIButton buttonWithType:
-            UIButtonTypeSystem];
+        [UIButton buttonWithType:UIButtonTypeSystem];
 
     self.dataButton.frame =
-        CGRectMake(12, 275, 300, 42);
+        CGRectMake(12, 302, 300, 40);
 
     self.dataButton.backgroundColor =
         [UIColor colorWithRed:0.10
@@ -167,14 +178,10 @@ static const char *const kSymbols[] = {
         setTitleColor:UIColor.whiteColor
         forState:UIControlStateNormal];
 
-    self.dataButton.titleLabel.font =
-        [UIFont boldSystemFontOfSize:14];
-
     [self.dataButton
         addTarget:self
-        action:@selector(copyAllData)
-        forControlEvents:
-            UIControlEventTouchUpInside];
+        action:@selector(exportData)
+        forControlEvents:UIControlEventTouchUpInside];
 
     self.dataButton.hidden = YES;
 
@@ -182,8 +189,7 @@ static const char *const kSymbols[] = {
 
     self.statusLabel =
         [[UILabel alloc]
-            initWithFrame:
-                CGRectMake(12, 320, 300, 18)];
+            initWithFrame:CGRectMake(12, 347, 300, 20)];
 
     self.statusLabel.textColor =
         UIColor.whiteColor;
@@ -217,22 +223,23 @@ static const char *const kSymbols[] = {
 
     CGRect frame = self.frame;
 
-    frame.size =
-        self.expanded
-            ? CGSizeMake(324, 345)
-            : CGSizeMake(190, 38);
+    frame.size = self.expanded
+        ? CGSizeMake(324, 375)
+        : CGSizeMake(190, 38);
 
     if (self.superview) {
 
-        CGFloat maxX =
-            MAX(0,
-                self.superview.bounds.size.width -
-                frame.size.width);
+        CGFloat maxX = MAX(
+            0,
+            self.superview.bounds.size.width -
+            frame.size.width
+        );
 
-        CGFloat maxY =
-            MAX(0,
-                self.superview.bounds.size.height -
-                frame.size.height);
+        CGFloat maxY = MAX(
+            0,
+            self.superview.bounds.size.height -
+            frame.size.height
+        );
 
         frame.origin.x =
             MAX(0, MIN(frame.origin.x, maxX));
@@ -244,33 +251,36 @@ static const char *const kSymbols[] = {
     self.frame = frame;
 
     self.details.hidden = !self.expanded;
+    self.refreshButton.hidden = !self.expanded;
     self.dataButton.hidden = !self.expanded;
     self.statusLabel.hidden = !self.expanded;
 
-    [self.toggle
-        setTitle:
-            self.expanded
-                ? @"CMS Bridge v10 -"
-                : @"CMS Bridge v10 +"
+    [self.toggleButton
+        setTitle:self.expanded
+            ? @"CMS Bridge v11 -"
+            : @"CMS Bridge v11 +"
         forState:UIControlStateNormal];
 }
 
-- (void)copyAllData {
+- (void)refreshData {
+    self.statusLabel.text = @"Läser data...";
+    CMSInspect();
+}
 
-    NSString *report = self.fullReport;
+- (void)exportData {
 
-    if (report.length == 0) {
+    if (self.fullReport.length == 0) {
         self.statusLabel.text = @"Ingen data ännu";
         return;
     }
 
     [UIPasteboard generalPasteboard].string =
-        report;
+        self.fullReport;
 
     self.statusLabel.text =
         [NSString stringWithFormat:
-            @"Kopierat! %lu tecken",
-            (unsigned long)report.length];
+            @"Kopierat: %lu tecken",
+            (unsigned long)self.fullReport.length];
 
     [self.dataButton
         setTitle:@"KOPIERAT!"
@@ -279,32 +289,34 @@ static const char *const kSymbols[] = {
 
 - (void)drag:(UIPanGestureRecognizer *)gesture {
 
-    if (!self.superview) {
-        return;
-    }
+    if (!self.superview) return;
 
     CGPoint delta =
         [gesture translationInView:self.superview];
 
     CGRect frame = self.frame;
 
-    CGFloat maxX =
-        MAX(0,
-            self.superview.bounds.size.width -
-            frame.size.width);
+    CGFloat maxX = MAX(
+        0,
+        self.superview.bounds.size.width -
+        frame.size.width
+    );
 
-    CGFloat maxY =
-        MAX(0,
-            self.superview.bounds.size.height -
-            frame.size.height);
+    CGFloat maxY = MAX(
+        0,
+        self.superview.bounds.size.height -
+        frame.size.height
+    );
 
-    frame.origin.x =
-        MAX(0,
-            MIN(frame.origin.x + delta.x, maxX));
+    frame.origin.x = MAX(
+        0,
+        MIN(frame.origin.x + delta.x, maxX)
+    );
 
-    frame.origin.y =
-        MAX(0,
-            MIN(frame.origin.y + delta.y, maxY));
+    frame.origin.y = MAX(
+        0,
+        MIN(frame.origin.y + delta.y, maxY)
+    );
 
     self.frame = frame;
 
@@ -332,16 +344,12 @@ static const char *const kSymbols[] = {
 
 #pragma mark - Setup
 
-static CMSBridgeWindow *gWindow = nil;
-static CMSBridgePanel *gPanel = nil;
-
 static UIWindowScene *CMSForegroundScene(void) {
 
     for (UIScene *scene in
          UIApplication.sharedApplication.connectedScenes) {
 
-        if ([scene isKindOfClass:
-                UIWindowScene.class] &&
+        if ([scene isKindOfClass:UIWindowScene.class] &&
             scene.activationState ==
                 UISceneActivationStateForegroundActive) {
 
@@ -354,16 +362,10 @@ static UIWindowScene *CMSForegroundScene(void) {
 
 static void CMSSetupPanel(void) {
 
-    if (gPanel) {
-        return;
-    }
+    if (gPanel) return;
 
-    UIWindowScene *scene =
-        CMSForegroundScene();
-
-    if (!scene) {
-        return;
-    }
+    UIWindowScene *scene = CMSForegroundScene();
+    if (!scene) return;
 
     gWindow =
         [[CMSBridgeWindow alloc]
@@ -385,8 +387,7 @@ static void CMSSetupPanel(void) {
 
     gPanel =
         [[CMSBridgePanel alloc]
-            initWithFrame:
-                CGRectMake(12, 90, 190, 38)];
+            initWithFrame:CGRectMake(12, 90, 190, 38)];
 
     [controller.view addSubview:gPanel];
 
@@ -394,252 +395,177 @@ static void CMSSetupPanel(void) {
     gWindow.hidden = NO;
 }
 
-#pragma mark - Helpers
+#pragma mark - Safe data helpers
 
-static NSString *CMSString(const char *value) {
+static NSString *CMSTypeName(id object) {
 
-    if (!value) {
-        return @"?";
-    }
+    if (!object) return @"nil";
 
-    NSString *result =
-        [NSString stringWithUTF8String:value];
-
-    return result ?: @"?";
+    return NSStringFromClass([object class]);
 }
 
-static BOOL CMSInterestingName(NSString *name) {
+static NSString *CMSPreview(id object) {
 
-    NSString *lower = name.lowercaseString;
+    if (!object) return @"nil";
 
-    NSArray<NSString *> *terms = @[
-        @"history",
-        @"symbol",
-        @"column",
-        @"count",
-        @"refresh",
-        @"raid",
-        @"spin",
-        @"triple",
-        @"load",
-        @"update"
-    ];
+    if ([object isKindOfClass:NSString.class]) {
 
-    for (NSString *term in terms) {
+        NSString *value = (NSString *)object;
 
-        if ([lower containsString:term]) {
-            return YES;
-        }
-    }
-
-    return NO;
-}
-
-#pragma mark - Properties
-
-static void CMSInspectProperties(
-    Class cls,
-    NSMutableString *report) {
-
-    unsigned int count = 0;
-
-    objc_property_t *properties =
-        class_copyPropertyList(cls, &count);
-
-    [report appendFormat:
-        @"\n=== EGENSKAPER: %u ===\n",
-        count];
-
-    for (unsigned int i = 0; i < count; i++) {
-
-        [report appendFormat:
-            @"%@\n  %@\n",
-            CMSString(property_getName(properties[i])),
-            CMSString(property_getAttributes(properties[i]))];
-    }
-
-    free(properties);
-}
-
-#pragma mark - Ivars
-
-static void CMSInspectIvars(
-    Class cls,
-    NSMutableString *report) {
-
-    unsigned int count = 0;
-
-    Ivar *ivars =
-        class_copyIvarList(cls, &count);
-
-    [report appendFormat:
-        @"\n=== INSTANSVARIABLER: %u ===\n",
-        count];
-
-    for (unsigned int i = 0; i < count; i++) {
-
-        [report appendFormat:
-            @"%@ : %@\n",
-            CMSString(ivar_getName(ivars[i])),
-            CMSString(ivar_getTypeEncoding(ivars[i]))];
-    }
-
-    free(ivars);
-}
-
-#pragma mark - Methods
-
-static void CMSInspectMethods(
-    Class cls,
-    NSMutableString *report) {
-
-    unsigned int count = 0;
-
-    Method *methods =
-        class_copyMethodList(cls, &count);
-
-    [report appendFormat:
-        @"\n=== METODER TOTALT: %u ===\n",
-        count];
-
-    NSUInteger matches = 0;
-
-    for (unsigned int i = 0; i < count; i++) {
-
-        Method method = methods[i];
-
-        NSString *name =
-            NSStringFromSelector(
-                method_getName(method));
-
-        if (!CMSInterestingName(name)) {
-            continue;
+        if (value.length > 160) {
+            return [[value substringToIndex:160]
+                stringByAppendingString:@"..."];
         }
 
-        matches++;
-
-        [report appendFormat:
-            @"\nMETOD: %@\n"
-             "ENCODING: %@\n",
-            name,
-            CMSString(method_getTypeEncoding(method))];
-
-        unsigned int arguments =
-            method_getNumberOfArguments(method);
-
-        [report appendFormat:
-            @"ARGUMENT: %u\n",
-            arguments];
-
-        for (unsigned int a = 0;
-             a < arguments;
-             a++) {
-
-            char *type =
-                method_copyArgumentType(method, a);
-
-            [report appendFormat:
-                @"  arg%u = %@\n",
-                a,
-                CMSString(type)];
-
-            free(type);
-        }
-
-        char *returnType =
-            method_copyReturnType(method);
-
-        [report appendFormat:
-            @"RETURN = %@\n",
-            CMSString(returnType)];
-
-        free(returnType);
+        return value;
     }
+
+    if ([object isKindOfClass:NSNumber.class]) {
+        return [(NSNumber *)object stringValue];
+    }
+
+    if ([object isKindOfClass:NSNull.class]) {
+        return @"NSNull";
+    }
+
+    if ([object isKindOfClass:NSArray.class]) {
+
+        return [NSString stringWithFormat:
+            @"Array count=%lu",
+            (unsigned long)[(NSArray *)object count]];
+    }
+
+    if ([object isKindOfClass:NSDictionary.class]) {
+
+        return [NSString stringWithFormat:
+            @"Dictionary count=%lu",
+            (unsigned long)[(NSDictionary *)object count]];
+    }
+
+    return @"(object preview skipped)";
+}
+
+static void CMSDescribeArray(
+    NSString *name,
+    id object,
+    NSMutableString *report) {
 
     [report appendFormat:
-        @"\nMATCHANDE METODER: %lu\n",
-        (unsigned long)matches];
+        @"\n=== %@ ===\nCLASS: %@\n",
+        name,
+        CMSTypeName(object)];
 
-    free(methods);
-}
+    if (![object isKindOfClass:NSArray.class]) {
+        [report appendString:@"NOT ARRAY\n"];
+        return;
+    }
 
-#pragma mark - Class hierarchy
+    NSArray *array = (NSArray *)object;
 
-static void CMSInspectHierarchy(
-    Class cls,
-    NSMutableString *report) {
+    [report appendFormat:
+        @"COUNT: %lu\n",
+        (unsigned long)array.count];
 
-    [report appendString:
-        @"\n=== KLASSHIERARKI ===\n"];
+    NSUInteger limit = MIN(array.count, 12);
 
-    Class current = cls;
+    for (NSUInteger i = 0; i < limit; i++) {
 
-    for (NSUInteger depth = 0;
-         current && depth < 12;
-         depth++) {
+        id item = array[i];
 
         [report appendFormat:
-            @"%lu: %@\n",
-            (unsigned long)depth,
-            CMSString(class_getName(current))];
+            @"[%lu] %@ | %@\n",
+            (unsigned long)i,
+            CMSTypeName(item),
+            CMSPreview(item)];
 
-        current = class_getSuperclass(current);
-    }
-}
+        if ([item isKindOfClass:NSArray.class]) {
 
-#pragma mark - Symbols
+            NSArray *nested = (NSArray *)item;
 
-static void CMSInspectSymbols(
-    NSMutableString *report) {
+            NSUInteger nestedLimit =
+                MIN(nested.count, 8);
 
-    NSUInteger found = 0;
+            for (NSUInteger j = 0;
+                 j < nestedLimit;
+                 j++) {
 
-    NSMutableSet<NSString *> *owners =
-        [NSMutableSet set];
+                id value = nested[j];
 
-    [report appendString:
-        @"=== EXPORTERADE FUNKTIONER ===\n"];
-
-    for (NSUInteger i = 0; i < 5; i++) {
-
-        void *address =
-            dlsym(RTLD_DEFAULT, kSymbols[i]);
-
-        NSString *owner = @"unknown";
-
-        if (address) {
-
-            found++;
-
-            Dl_info info = {0};
-
-            if (dladdr(address, &info) &&
-                info.dli_fname) {
-
-                owner =
-                    CMSString(info.dli_fname)
-                        .lastPathComponent;
-
-                [owners addObject:owner];
+                [report appendFormat:
+                    @"    [%lu] %@ | %@\n",
+                    (unsigned long)j,
+                    CMSTypeName(value),
+                    CMSPreview(value)];
             }
         }
-
-        [report appendFormat:
-            @"%lu. %@ %@\n",
-            (unsigned long)(i + 1),
-            address ? @"FOUND" : @"MISSING",
-            address ? owner : @""];
     }
 
-    [report appendFormat:
-        @"\nSYMBOLER: %lu/5\n"
-         "SAMMA BIBLIOTEK: %@\n",
-        (unsigned long)found,
-        (found == 5 && owners.count == 1)
-            ? @"JA" : @"NEJ"];
+    if (array.count > limit) {
+        [report appendFormat:
+            @"... %lu fler poster\n",
+            (unsigned long)(array.count - limit)];
+    }
 }
 
-#pragma mark - Diagnostics
+#pragma mark - Widget discovery
+
+static void CMSFindWidgets(
+    UIView *view,
+    Class targetClass,
+    NSMutableArray *results,
+    NSUInteger depth) {
+
+    if (!view || depth > 30 ||
+        results.count >= 10) {
+        return;
+    }
+
+    if ([view isKindOfClass:targetClass]) {
+        [results addObject:view];
+    }
+
+    for (UIView *child in view.subviews) {
+
+        CMSFindWidgets(
+            child,
+            targetClass,
+            results,
+            depth + 1
+        );
+
+        if (results.count >= 10) {
+            break;
+        }
+    }
+}
+
+static id CMSReadProperty(
+    id object,
+    NSString *propertyName) {
+
+    if (!object) return nil;
+
+    SEL selector =
+        NSSelectorFromString(propertyName);
+
+    if (![object respondsToSelector:selector]) {
+        return nil;
+    }
+
+    // Only object-returning, zero-argument getters
+    // confirmed in the v10 runtime report.
+    IMP implementation =
+        [object methodForSelector:selector];
+
+    if (!implementation) return nil;
+
+    id (*getter)(id, SEL) =
+        (id (*)(id, SEL))implementation;
+
+    return getter(object, selector);
+}
+
+#pragma mark - Inspection
 
 static void CMSInspect(void) {
 
@@ -647,43 +573,162 @@ static void CMSInspect(void) {
 
     NSMutableString *report =
         [NSMutableString stringWithString:
-            @"CMSCrystalBridge v10\n"
-             "READ-ONLY DIAGNOSTICS\n\n"];
+            @"CMSCrystalBridge v11\n"
+             "READ-ONLY LIVE SNAPSHOT\n\n"];
 
     [report appendFormat:
-        @"LADDADE BILDER: %u\n\n",
+        @"LADDADE BILDER: %u\n",
         _dyld_image_count()];
 
-    CMSInspectSymbols(report);
+    const char *symbols[] = {
+        "RS_GetTripleHistoryForSymbol",
+        "RS_ResetTripleHistoryForSymbol",
+        "RS_ResetTripleHistory",
+        "RS_GetTargetSpinSymbol",
+        "RS_SetTargetSpinSymbol"
+    };
 
-    Class cls =
+    NSUInteger foundSymbols = 0;
+
+    for (NSUInteger i = 0; i < 5; i++) {
+
+        if (dlsym(RTLD_DEFAULT, symbols[i])) {
+            foundSymbols++;
+        }
+    }
+
+    [report appendFormat:
+        @"RS SYMBOLS: %lu/5\n",
+        (unsigned long)foundSymbols];
+
+    Class targetClass =
         objc_getClass("VIPCronologiaWidget");
 
-    if (!cls) {
+    if (!targetClass) {
 
         [report appendString:
-            @"\nVIPCronologiaWidget: NOT FOUND\n"];
+            @"VIPCronologiaWidget: NOT FOUND\n"];
 
     } else {
 
         [report appendString:
-            @"\nVIPCronologiaWidget: FOUND\n"];
+            @"VIPCronologiaWidget: FOUND\n"];
 
-        CMSInspectHierarchy(cls, report);
-        CMSInspectProperties(cls, report);
-        CMSInspectIvars(cls, report);
-        CMSInspectMethods(cls, report);
+        NSMutableArray *widgets =
+            [NSMutableArray array];
+
+        UIWindowScene *scene =
+            CMSForegroundScene();
+
+        if (scene) {
+
+            for (UIWindow *window in scene.windows) {
+
+                if (window == gWindow) {
+                    continue;
+                }
+
+                CMSFindWidgets(
+                    window,
+                    targetClass,
+                    widgets,
+                    0
+                );
+            }
+        }
+
+        [report appendFormat:
+            @"ACTIVE WIDGETS: %lu\n",
+            (unsigned long)widgets.count];
+
+        NSUInteger index = 0;
+
+        for (id widget in widgets) {
+
+            [report appendFormat:
+                @"\n========== WIDGET %lu ==========\n",
+                (unsigned long)index];
+
+            id columnData =
+                CMSReadProperty(widget, @"columnData");
+
+            id columnCountLabels =
+                CMSReadProperty(
+                    widget,
+                    @"columnCountLabels"
+                );
+
+            id columnCards =
+                CMSReadProperty(widget, @"columnCards");
+
+            CMSDescribeArray(
+                @"columnData",
+                columnData,
+                report
+            );
+
+            CMSDescribeArray(
+                @"columnCountLabels",
+                columnCountLabels,
+                report
+            );
+
+            CMSDescribeArray(
+                @"columnCards",
+                columnCards,
+                report
+            );
+
+            if ([columnCountLabels
+                    isKindOfClass:NSArray.class]) {
+
+                NSArray *labels =
+                    (NSArray *)columnCountLabels;
+
+                [report appendString:
+                    @"\n=== LABEL TEXT ===\n"];
+
+                NSUInteger limit =
+                    MIN(labels.count, 20);
+
+                for (NSUInteger i = 0;
+                     i < limit;
+                     i++) {
+
+                    id item = labels[i];
+
+                    if ([item
+                            isKindOfClass:UILabel.class]) {
+
+                        UILabel *label =
+                            (UILabel *)item;
+
+                        [report appendFormat:
+                            @"[%lu] %@\n",
+                            (unsigned long)i,
+                            label.text ?: @"(empty)"];
+                    } else {
+
+                        [report appendFormat:
+                            @"[%lu] NOT UILabel: %@\n",
+                            (unsigned long)i,
+                            CMSTypeName(item)];
+                    }
+                }
+            }
+
+            index++;
+        }
     }
 
     [report appendString:
         @"\n=== STATUS ===\n"
-         "Endast runtime-metadata\n"
-         "Inga okända metoder anropas\n"
-         "Inga historikvärden läses\n"
-         "Raid stack: ej ansluten\n"
-         "AutoSpeed: oförändrad\n"];
+         "Snapshot only\n"
+         "No game state modifications\n"
+         "No RS functions called\n"
+         "AutoSpeed unchanged\n"];
 
-    NSLog(@"[CMSBridgeV10] %@", report);
+    NSLog(@"[CMSBridgeV11] %@", report);
 
     if (gPanel) {
 
@@ -699,14 +744,14 @@ static void CMSInspect(void) {
             forState:UIControlStateNormal];
 
         gPanel.statusLabel.text =
-            @"Rapport klar";
+            @"Snapshot klar";
     }
 }
 
 #pragma mark - Startup
 
 __attribute__((constructor))
-static void CMSBridgeV10Start(void) {
+static void CMSBridgeV11Start(void) {
 
     dispatch_async(
         dispatch_get_main_queue(), ^{
