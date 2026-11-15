@@ -2,61 +2,74 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <Vision/Vision.h>
-#import <stdint.h>
+#import <math.h>
 
 @interface CMSLogger : NSObject
+
 @property(nonatomic,strong) UIWindow *panel;
 @property(nonatomic,strong) UITextView *logView;
 @property(nonatomic,strong) UILabel *statusLabel;
 @property(nonatomic,strong) UILabel *balanceLabel;
 @property(nonatomic,strong) UILabel *betLabel;
-@property(nonatomic,strong) UILabel *resultLabel;
-@property(nonatomic,strong) UILabel *regionLabel;
-@property(nonatomic,strong) NSMutableArray<NSString *> *events;
+@property(nonatomic,strong) UILabel *topLabel;
+@property(nonatomic,strong) UILabel *areaLabel;
+@property(nonatomic,strong) NSMutableArray *events;
 @property(nonatomic,strong) NSTimer *timer;
+
 @property(nonatomic,assign) BOOL running;
 @property(nonatomic,assign) BOOL busy;
 @property(nonatomic,assign) NSInteger attempts;
 @property(nonatomic,assign) NSInteger scans;
-@property(nonatomic,assign) NSInteger balanceYPercent;
-@property(nonatomic,assign) NSInteger resultYPercent;
+
+@property(nonatomic,assign) CGFloat balanceY;
+@property(nonatomic,assign) CGFloat betY;
+@property(nonatomic,assign) CGFloat topY;
+
 @property(nonatomic,assign) long long balance;
-@property(nonatomic,assign) BOOL hasBalance;
 @property(nonatomic,assign) long long pendingBalance;
 @property(nonatomic,assign) NSInteger balanceStreak;
-@property(nonatomic,assign) NSInteger bet;
+@property(nonatomic,assign) BOOL hasBalance;
+
+@property(nonatomic,assign) NSInteger currentBet;
 @property(nonatomic,assign) NSInteger pendingBet;
 @property(nonatomic,assign) NSInteger betStreak;
-@property(nonatomic,copy) NSString *result;
-@property(nonatomic,copy) NSString *pendingResult;
-@property(nonatomic,assign) NSInteger resultStreak;
+
+@property(nonatomic,copy) NSString *topResult;
+@property(nonatomic,copy) NSString *pendingTop;
+@property(nonatomic,assign) NSInteger topStreak;
+
 @property(nonatomic,assign) NSInteger possibleSpins;
-@property(nonatomic,assign) NSInteger possibleResults;
 @property(nonatomic,assign) NSInteger uncertainChanges;
+
 + (instancetype)shared;
 - (void)start;
+
 @end
 
 @implementation CMSLogger
 
 + (instancetype)shared {
-    static CMSLogger *x;
+    static CMSLogger *instance;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        x = [CMSLogger new];
-        x.events = [NSMutableArray new];
-        x.balanceYPercent = 82;
-        x.resultYPercent = 20;
-        x.result = @"";
-        x.pendingResult = @"";
+        instance = [CMSLogger new];
+        instance.events = [NSMutableArray new];
+
+        // Positions based on the supplied iPhone screenshot.
+        instance.balanceY = 0.828;
+        instance.betY = 0.711;
+        instance.topY = 0.20;
+
+        instance.topResult = @"";
+        instance.pendingTop = @"";
     });
-    return x;
+    return instance;
 }
 
-- (void)log:(NSString *)s {
+- (void)log:(NSString *)message {
     if (![NSThread isMainThread]) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            [self log:s];
+            [self log:message];
         });
         return;
     }
@@ -65,11 +78,11 @@
     f.dateFormat = @"HH:mm:ss";
 
     NSString *line = [NSString stringWithFormat:
-        @"%@ %@", [f stringFromDate:[NSDate date]], s];
+        @"%@ %@", [f stringFromDate:[NSDate date]], message];
 
     [self.events addObject:line];
 
-    if (self.events.count > 350)
+    if (self.events.count > 400)
         [self.events removeObjectAtIndex:0];
 
     NSString *all =
@@ -83,17 +96,17 @@
 
     [all writeToFile:
         [NSTemporaryDirectory()
-            stringByAppendingPathComponent:@"CMSCrystalV12.log"]
+            stringByAppendingPathComponent:@"CMSCrystalV13.log"]
         atomically:YES
         encoding:NSUTF8StringEncoding
         error:nil];
 
-    NSLog(@"[CMSCrystal] %@", line);
+    NSLog(@"[CMSCrystalV13] %@", line);
 }
 
 - (void)refresh {
     self.statusLabel.text = [NSString stringWithFormat:
-        @"AUTO %@ | SCANS %ld | POSSIBLE SPINS %ld",
+        @"AUTO %@ | SCANS %ld | SPINS? %ld",
         self.running ? @"ON" : @"OFF",
         (long)self.scans,
         (long)self.possibleSpins];
@@ -103,36 +116,42 @@
                        UIColor.systemOrangeColor;
 
     self.balanceLabel.text = self.hasBalance ?
-        [NSString stringWithFormat:@"BALANCE: %lld",self.balance] :
+        [NSString stringWithFormat:
+            @"BALANCE: %lld", self.balance] :
         @"BALANCE: WAITING";
 
-    self.betLabel.text = self.bet > 0 ?
-        [NSString stringWithFormat:@"MAX BET: x%ld",(long)self.bet] :
-        @"MAX BET: WAITING";
+    self.betLabel.text = self.currentBet > 0 ?
+        [NSString stringWithFormat:
+            @"CURRENT BET: x%ld", (long)self.currentBet] :
+        @"CURRENT BET: WAITING";
 
-    self.resultLabel.text = [NSString stringWithFormat:
-        @"TOP: %@ | CANDIDATES %ld",
-        self.result.length ? self.result : @"UNKNOWN",
-        (long)self.possibleResults];
+    self.topLabel.text = [NSString stringWithFormat:
+        @"TOP: %@",
+        self.topResult.length ? self.topResult : @"UNKNOWN"];
 
-    self.regionLabel.text = [NSString stringWithFormat:
-        @"TOP Y %ld%% | BAL Y %ld%%",
-        (long)self.resultYPercent,
-        (long)self.balanceYPercent];
+    self.areaLabel.text = [NSString stringWithFormat:
+        @"BAL %.1f%% | BET %.1f%% | TOP %.0f%%",
+        self.balanceY * 100,
+        self.betY * 100,
+        self.topY * 100];
 }
 
 - (UIWindow *)gameWindow {
     UIWindow *best = nil;
 
-    for (UIScene *s in
+    for (UIScene *scene in
          UIApplication.sharedApplication.connectedScenes) {
 
-        if (![s isKindOfClass:[UIWindowScene class]])
+        if (![scene isKindOfClass:[UIWindowScene class]])
             continue;
 
-        for (UIWindow *w in ((UIWindowScene *)s).windows) {
-            if (w == self.panel || w.hidden ||
-                w.bounds.size.width < 100 ||
+        for (UIWindow *w in
+             ((UIWindowScene *)scene).windows) {
+
+            if (w == self.panel || w.hidden)
+                continue;
+
+            if (w.bounds.size.width < 100 ||
                 w.bounds.size.height < 100)
                 continue;
 
@@ -147,22 +166,23 @@
     UIWindow *w = [self gameWindow];
     if (!w) return nil;
 
-    UIGraphicsImageRendererFormat *fmt =
+    UIGraphicsImageRendererFormat *format =
         [UIGraphicsImageRendererFormat defaultFormat];
 
-    fmt.scale = 1;
-    fmt.opaque = YES;
+    format.scale = 1.0;
+    format.opaque = YES;
 
-    UIGraphicsImageRenderer *r =
+    UIGraphicsImageRenderer *renderer =
         [[UIGraphicsImageRenderer alloc]
-            initWithSize:w.bounds.size format:fmt];
+            initWithSize:w.bounds.size
+                  format:format];
 
-    return [r imageWithActions:
-        ^(UIGraphicsImageRendererContext *c) {
+    return [renderer imageWithActions:
+        ^(UIGraphicsImageRendererContext *context) {
             [w drawViewHierarchyInRect:
                 CGRectMake(0, 0,
-                           w.bounds.size.width,
-                           w.bounds.size.height)
+                    w.bounds.size.width,
+                    w.bounds.size.height)
                 afterScreenUpdates:NO];
         }];
 }
@@ -170,245 +190,334 @@
 - (CGImageRef)crop:(CGImageRef)image
                 x:(CGFloat)x
                 y:(CGFloat)y
-            width:(CGFloat)width
-           height:(CGFloat)height {
+                w:(CGFloat)width
+                h:(CGFloat)height {
 
-    CGFloat iw = (CGFloat)CGImageGetWidth(image);
-    CGFloat ih = (CGFloat)CGImageGetHeight(image);
+    CGFloat iw = CGImageGetWidth(image);
+    CGFloat ih = CGImageGetHeight(image);
 
-    CGRect r = CGRectMake(
-        iw*x, ih*y, iw*width, ih*height);
+    CGRect rect = CGRectMake(
+        iw * x,
+        ih * y,
+        iw * width,
+        ih * height);
 
-    r = CGRectIntersection(
-        r, CGRectMake(0, 0, iw, ih));
+    rect = CGRectIntersection(
+        rect,
+        CGRectMake(0, 0, iw, ih));
 
-    if (CGRectIsEmpty(r)) return NULL;
+    if (CGRectIsEmpty(rect))
+        return NULL;
 
     return CGImageCreateWithImageInRect(
-        image, CGRectIntegral(r));
+        image, CGRectIntegral(rect));
 }
 
-- (NSArray<NSDictionary *> *)recognize:(CGImageRef)image {
+- (NSArray<NSDictionary *> *)ocr:(CGImageRef)image {
     if (!image) return @[];
 
-    VNRecognizeTextRequest *req =
+    VNRecognizeTextRequest *request =
         [VNRecognizeTextRequest new];
 
-    req.recognitionLevel =
+    request.recognitionLevel =
         VNRequestTextRecognitionLevelAccurate;
-    req.usesLanguageCorrection = NO;
-    req.recognitionLanguages = @[@"en-US"];
 
-    NSError *err = nil;
+    request.usesLanguageCorrection = NO;
+    request.recognitionLanguages = @[@"en-US"];
 
     VNImageRequestHandler *handler =
         [[VNImageRequestHandler alloc]
             initWithCGImage:image options:@{}];
 
-    if (![handler performRequests:@[req] error:&err])
-        return @[];
+    NSError *error = nil;
 
-    NSMutableArray *a = [NSMutableArray new];
+    BOOL ok = [handler performRequests:@[request]
+                                 error:&error];
 
-    for (VNRecognizedTextObservation *obs in req.results) {
-        VNRecognizedText *t =
+    if (!ok) return @[];
+
+    NSMutableArray *items = [NSMutableArray new];
+
+    for (VNRecognizedTextObservation *obs
+         in request.results) {
+
+        VNRecognizedText *text =
             [[obs topCandidates:1] firstObject];
 
-        if (t) {
-            [a addObject:@{
-                @"text":t.string,
-                @"confidence":@(t.confidence),
-                @"y":@(obs.boundingBox.origin.y)
-            }];
-        }
+        if (!text) continue;
+
+        [items addObject:@{
+            @"text": text.string,
+            @"confidence": @(text.confidence)
+        }];
     }
-    return a;
+
+    return items;
 }
 
-- (long long)numberFromText:(NSString *)s {
-    NSMutableString *digits = [NSMutableString new];
+- (NSString *)raw:(NSArray<NSDictionary *> *)items {
+    NSMutableArray *parts = [NSMutableArray new];
 
-    for (NSUInteger i=0; i<s.length; i++) {
-        unichar c = [s characterAtIndex:i];
+    for (NSDictionary *item in items) {
+        [parts addObject:item[@"text"]];
+    }
+
+    return [parts componentsJoinedByString:@" | "];
+}
+
+- (long long)digits:(NSString *)text {
+    NSMutableString *s = [NSMutableString new];
+
+    for (NSUInteger i = 0; i < text.length; i++) {
+        unichar c = [text characterAtIndex:i];
 
         if (c >= '0' && c <= '9')
-            [digits appendFormat:@"%C",c];
+            [s appendFormat:@"%C", c];
     }
 
-    if (!digits.length || digits.length > 15)
+    if (!s.length || s.length > 12)
         return -1;
 
-    return digits.longLongValue;
+    return s.longLongValue;
 }
 
-- (long long)balanceFrom:(NSArray<NSDictionary *> *)items {
-    long long best = -1;
-    float bestConfidence = 0;
+- (long long)readBalance:
+    (NSArray<NSDictionary *> *)items {
 
-    for (NSDictionary *d in items) {
-        NSString *s = d[@"text"];
+    long long best = -1;
+    float confidence = -1;
+
+    for (NSDictionary *item in items) {
+        NSString *text = item[@"text"];
 
         NSString *trim =
-            [s stringByTrimmingCharactersInSet:
+            [text stringByTrimmingCharactersInSet:
                 NSCharacterSet.whitespaceAndNewlineCharacterSet];
 
-        // Spin balance appears as +791636.
-        // Ignore other numbers without a leading +.
         if (![trim hasPrefix:@"+"])
             continue;
 
-        long long n = [self numberFromText:trim];
-        if (n < 0) continue;
+        // Do not accept arbitrary extra text.
+        NSString *numberText =
+            [trim substringFromIndex:1];
 
-        float c = [d[@"confidence"] floatValue];
+        NSMutableString *clean =
+            [NSMutableString new];
 
-        if (c > bestConfidence) {
-            best = n;
-            bestConfidence = c;
+        BOOL valid = YES;
+
+        for (NSUInteger i = 0;
+             i < numberText.length; i++) {
+
+            unichar c =
+                [numberText characterAtIndex:i];
+
+            if (c >= '0' && c <= '9') {
+                [clean appendFormat:@"%C", c];
+            } else if (c == ' ' || c == ',' ||
+                       c == '.') {
+                // Allow common number separators.
+            } else {
+                valid = NO;
+                break;
+            }
+        }
+
+        if (!valid || !clean.length ||
+            clean.length > 12)
+            continue;
+
+        long long value = clean.longLongValue;
+        float c = [item[@"confidence"] floatValue];
+
+        if (c > confidence) {
+            confidence = c;
+            best = value;
         }
     }
+
     return best;
 }
 
-- (NSInteger)betFrom:(NSArray<NSDictionary *> *)items {
-    for (NSDictionary *d in items) {
-        NSString *s = [d[@"text"] uppercaseString];
+- (NSInteger)readCurrentBet:
+    (NSArray<NSDictionary *> *)items {
 
-        NSRange r = [s rangeOfString:@"BET"];
-        if (r.location == NSNotFound)
+    NSInteger best = 0;
+    float confidence = -1;
+
+    for (NSDictionary *item in items) {
+        NSString *s =
+            [item[@"text"] uppercaseString];
+
+        s = [s stringByReplacingOccurrencesOfString:@" "
+                                         withString:@""];
+
+        // This crop contains the small green x1/x10
+        // button, not the MAX BET banner.
+        if (![s hasPrefix:@"X"] &&
+            ![s hasPrefix:@"×"])
             continue;
 
-        NSRange x =
-            [s rangeOfString:@"X"
-                     options:NSBackwardsSearch];
+        long long value =
+            [self digits:[s substringFromIndex:1]];
 
-        if (x.location == NSNotFound)
+        if (value <= 0 || value > 100000)
             continue;
 
-        long long n = [self numberFromText:
-            [s substringFromIndex:x.location+1]];
+        float c = [item[@"confidence"] floatValue];
 
-        if (n >= 1 && n <= 100000)
-            return (NSInteger)n;
+        if (c > confidence) {
+            confidence = c;
+            best = (NSInteger)value;
+        }
     }
-    return 0;
+
+    return best;
 }
 
-- (NSString *)resultFrom:(NSArray<NSDictionary *> *)items {
+- (NSString *)readTop:
+    (NSArray<NSDictionary *> *)items {
+
     NSArray *names =
-        @[@"ATTACK",@"POINT",@"STEAL",@"SHIELD",@"SPINS"];
+        @[@"ATTACK", @"POINT", @"STEAL",
+          @"SHIELD", @"SPINS"];
 
     NSString *best = @"";
-    float score = 0;
+    float bestConfidence = 0;
 
-    for (NSDictionary *d in items) {
-        NSString *s = [d[@"text"] uppercaseString];
+    for (NSDictionary *item in items) {
+        NSString *text =
+            [item[@"text"] uppercaseString];
+
         float confidence =
-            [d[@"confidence"] floatValue];
+            [item[@"confidence"] floatValue];
 
         for (NSString *name in names) {
-            if ([s containsString:name] &&
-                confidence > score) {
+            if ([text containsString:name] &&
+                confidence > bestConfidence) {
+
                 best = name;
-                score = confidence;
+                bestConfidence = confidence;
             }
         }
     }
 
-    return score >= 0.7 ? best : @"";
+    return bestConfidence >= 0.70 ? best : @"";
 }
 
-- (void)processBalance:(long long)n {
-    if (n < 0) return;
+- (void)processBet:(NSInteger)value {
+    if (value <= 0) {
+        self.betStreak = 0;
+        return;
+    }
 
-    if (n == self.pendingBalance)
+    if (value == self.pendingBet)
+        self.betStreak++;
+    else {
+        self.pendingBet = value;
+        self.betStreak = 1;
+    }
+
+    if (self.betStreak >= 3 &&
+        self.currentBet != value) {
+
+        self.currentBet = value;
+
+        [self log:[NSString stringWithFormat:
+            @"CURRENT BET DETECTED: x%ld",
+            (long)value]];
+    }
+}
+
+- (void)processBalance:(long long)value {
+    if (value < 0) {
+        self.balanceStreak = 0;
+        return;
+    }
+
+    if (value == self.pendingBalance)
         self.balanceStreak++;
     else {
-        self.pendingBalance = n;
+        self.pendingBalance = value;
         self.balanceStreak = 1;
     }
 
-    if (self.balanceStreak < 2)
+    if (self.balanceStreak < 3)
         return;
 
     if (!self.hasBalance) {
         self.hasBalance = YES;
-        self.balance = n;
+        self.balance = value;
 
         [self log:[NSString stringWithFormat:
-            @"BALANCE BASELINE: %lld",n]];
+            @"BALANCE BASELINE: %lld", value]];
         return;
     }
 
-    if (n == self.balance)
+    if (value == self.balance)
         return;
 
     long long old = self.balance;
-    long long delta = n - old;
-    self.balance = n;
+    long long delta = value - old;
+
+    // Reject very large jumps as OCR errors.
+    // Do not silently overwrite the baseline.
+    long long limit = MAX(
+        100000LL,
+        (long long)self.currentBet * 100LL);
+
+    if (llabs(delta) > limit) {
+        [self log:[NSString stringWithFormat:
+            @"BALANCE SUSPICIOUS: %lld -> %lld",
+            old, value]];
+        return;
+    }
+
+    self.balance = value;
 
     [self log:[NSString stringWithFormat:
         @"BALANCE CHANGE: %lld -> %lld (%+lld)",
-        old,n,delta]];
+        old, value, delta]];
 
-    if (delta < 0 &&
-        self.bet > 0 &&
-        -delta == self.bet) {
+    if (self.currentBet > 0 &&
+        delta == -(long long)self.currentBet) {
 
         self.possibleSpins++;
 
         [self log:[NSString stringWithFormat:
             @"POSSIBLE SPIN #%ld | BET x%ld",
             (long)self.possibleSpins,
-            (long)self.bet]];
+            (long)self.currentBet]];
+
     } else {
         self.uncertainChanges++;
 
         [self log:
-            @"UNCLASSIFIED BALANCE CHANGE (WIN/REFUND/BET/READING?)"];
+            @"BALANCE CHANGE UNCLASSIFIED - WIN/REFUND/OCR?"];
     }
 }
 
-- (void)processBet:(NSInteger)n {
-    if (n <= 0) return;
-
-    if (n == self.pendingBet)
-        self.betStreak++;
-    else {
-        self.pendingBet = n;
-        self.betStreak = 1;
-    }
-
-    if (self.betStreak >= 2 && n != self.bet) {
-        self.bet = n;
-
-        [self log:[NSString stringWithFormat:
-            @"BET DETECTED: x%ld",(long)n]];
-    }
-}
-
-- (void)processResult:(NSString *)s {
-    if (!s.length) {
-        self.resultStreak = 0;
-        self.pendingResult = @"";
+- (void)processTop:(NSString *)value {
+    if (!value.length) {
+        self.topStreak = 0;
+        self.pendingTop = @"";
         return;
     }
 
-    if ([s isEqualToString:self.pendingResult])
-        self.resultStreak++;
+    if ([value isEqualToString:self.pendingTop])
+        self.topStreak++;
     else {
-        self.pendingResult = s;
-        self.resultStreak = 1;
+        self.pendingTop = value;
+        self.topStreak = 1;
     }
 
-    if (self.resultStreak == 2 &&
-        ![s isEqualToString:self.result]) {
+    if (self.topStreak == 3 &&
+        ![value isEqualToString:self.topResult]) {
 
-        self.result = s;
-        self.possibleResults++;
+        self.topResult = value;
 
         [self log:[NSString stringWithFormat:
-            @"POSSIBLE TOP RESULT: %@",s]];
+            @"POSSIBLE TOP RESULT: %@", value]];
     }
 }
 
@@ -426,30 +535,33 @@
 
     self.scans++;
 
-    CGImageRef original = image.CGImage;
+    CGImageRef source = image.CGImage;
 
-    CGImageRef top = [self crop:original
-        x:0.12
-        y:self.resultYPercent/100.0
-        width:0.76
-        height:0.16];
+    CGImageRef balanceImage =
+        [self crop:source
+                x:0.39
+                y:self.balanceY
+                w:0.23
+                h:0.036];
 
-    CGImageRef bottom = [self crop:original
-        x:0.29
-        y:self.balanceYPercent/100.0
-        width:0.43
-        height:0.08];
+    CGImageRef betImage =
+        [self crop:source
+                x:0.615
+                y:self.betY
+                w:0.14
+                h:0.055];
 
-    CGImageRef bet = [self crop:original
-        x:0.28
-        y:0.665
-        width:0.45
-        height:0.045];
+    CGImageRef topImage =
+        [self crop:source
+                x:0.12
+                y:self.topY
+                w:0.76
+                h:0.16];
 
-    if (!top || !bottom || !bet) {
-        if (top) CGImageRelease(top);
-        if (bottom) CGImageRelease(bottom);
-        if (bet) CGImageRelease(bet);
+    if (!balanceImage || !betImage || !topImage) {
+        if (balanceImage) CGImageRelease(balanceImage);
+        if (betImage) CGImageRelease(betImage);
+        if (topImage) CGImageRelease(topImage);
 
         self.busy = NO;
         [self log:@"CROP FAILED"];
@@ -458,58 +570,53 @@
 
     dispatch_async(
         dispatch_get_global_queue(
-            QOS_CLASS_USER_INITIATED,0), ^{
+            QOS_CLASS_USER_INITIATED, 0), ^{
         @autoreleasepool {
-            NSArray *topTexts =
-                [self recognize:top];
 
             NSArray *balanceTexts =
-                [self recognize:bottom];
+                [self ocr:balanceImage];
 
             NSArray *betTexts =
-                [self recognize:bet];
+                [self ocr:betImage];
 
-            CGImageRelease(top);
-            CGImageRelease(bottom);
-            CGImageRelease(bet);
+            NSArray *topTexts =
+                [self ocr:topImage];
 
-            NSString *result =
-                [self resultFrom:topTexts];
+            CGImageRelease(balanceImage);
+            CGImageRelease(betImage);
+            CGImageRelease(topImage);
 
             long long balance =
-                [self balanceFrom:balanceTexts];
+                [self readBalance:balanceTexts];
 
-            NSInteger betValue =
-                [self betFrom:betTexts];
+            NSInteger bet =
+                [self readCurrentBet:betTexts];
+
+            NSString *top =
+                [self readTop:topTexts];
 
             dispatch_async(dispatch_get_main_queue(), ^{
                 self.busy = NO;
 
-                if (!self.running) return;
+                if (!self.running)
+                    return;
 
-                [self processBet:betValue];
+                [self processBet:bet];
                 [self processBalance:balance];
-                [self processResult:result];
+                [self processTop:top];
 
-                if (self.scans % 15 == 0) {
-                    NSMutableArray *raw =
-                        [NSMutableArray new];
-
-                    for (NSDictionary *d in balanceTexts)
-                        [raw addObject:d[@"text"]];
-
+                if (self.scans % 10 == 0) {
                     [self log:[NSString stringWithFormat:
-                        @"BALANCE OCR RAW: %@",
-                        [raw componentsJoinedByString:@" | "]]];
-
-                    [raw removeAllObjects];
-
-                    for (NSDictionary *d in betTexts)
-                        [raw addObject:d[@"text"]];
+                        @"BAL OCR RAW: %@",
+                        [self raw:balanceTexts]]];
 
                     [self log:[NSString stringWithFormat:
                         @"BET OCR RAW: %@",
-                        [raw componentsJoinedByString:@" | "]]];
+                        [self raw:betTexts]]];
+
+                    [self log:[NSString stringWithFormat:
+                        @"TOP OCR RAW: %@",
+                        [self raw:topTexts]]];
                 }
 
                 [self refresh];
@@ -519,7 +626,8 @@
 }
 
 - (void)tick:(NSTimer *)timer {
-    if (self.running) [self scan];
+    if (self.running)
+        [self scan];
 }
 
 - (void)toggle {
@@ -530,12 +638,13 @@
         [self log:@"AUTO STOPPED"];
     } else {
         self.running = YES;
+
         self.hasBalance = NO;
         self.balanceStreak = 0;
         self.betStreak = 0;
-        self.resultStreak = 0;
-        self.pendingResult = @"";
-        self.result = @"";
+        self.topStreak = 0;
+        self.pendingTop = @"";
+        self.topResult = @"";
 
         self.timer =
             [NSTimer scheduledTimerWithTimeInterval:0.6
@@ -544,7 +653,7 @@
                                            userInfo:nil
                                             repeats:YES];
 
-        [self log:@"AUTO STARTED - CALIBRATION MODE"];
+        [self log:@"AUTO STARTED - V13"];
         [self scan];
     }
 
@@ -552,31 +661,27 @@
 }
 
 - (void)balanceUp {
-    self.balanceYPercent =
-        MAX(65,self.balanceYPercent-2);
+    self.balanceY = MAX(0.70, self.balanceY - 0.01);
     [self refresh];
     [self log:@"BALANCE AREA UP"];
 }
 
 - (void)balanceDown {
-    self.balanceYPercent =
-        MIN(91,self.balanceYPercent+2);
+    self.balanceY = MIN(0.90, self.balanceY + 0.01);
     [self refresh];
     [self log:@"BALANCE AREA DOWN"];
 }
 
-- (void)topUp {
-    self.resultYPercent =
-        MAX(2,self.resultYPercent-2);
+- (void)betUp {
+    self.betY = MAX(0.60, self.betY - 0.01);
     [self refresh];
-    [self log:@"TOP AREA UP"];
+    [self log:@"BET AREA UP"];
 }
 
-- (void)topDown {
-    self.resultYPercent =
-        MIN(75,self.resultYPercent+2);
+- (void)betDown {
+    self.betY = MIN(0.85, self.betY + 0.01);
     [self refresh];
-    [self log:@"TOP AREA DOWN"];
+    [self log:@"BET AREA DOWN"];
 }
 
 - (void)copyLog {
@@ -586,17 +691,17 @@
         [self.events componentsJoinedByString:@"\n"];
 }
 
-- (UIButton *)button:(NSString *)name
-                frame:(CGRect)r
-               action:(SEL)a
-               parent:(UIView *)v {
+- (UIButton *)button:(NSString *)title
+                frame:(CGRect)frame
+               action:(SEL)action
+               parent:(UIView *)parent {
 
     UIButton *b =
         [UIButton buttonWithType:UIButtonTypeSystem];
 
-    b.frame = r;
+    b.frame = frame;
+    [b setTitle:title forState:UIControlStateNormal];
 
-    [b setTitle:name forState:UIControlStateNormal];
     [b setTitleColor:UIColor.whiteColor
            forState:UIControlStateNormal];
 
@@ -608,24 +713,25 @@
 
     b.layer.cornerRadius = 8;
 
-    [b addTarget:self action:a
-     forControlEvents:UIControlEventTouchUpInside];
+    [b addTarget:self
+          action:action
+forControlEvents:UIControlEventTouchUpInside];
 
-    [v addSubview:b];
+    [parent addSubview:b];
     return b;
 }
 
-- (void)move:(UIPanGestureRecognizer *)g {
-    CGPoint p =
-        [g translationInView:self.panel];
+- (void)movePanel:(UIPanGestureRecognizer *)gesture {
+    CGPoint p = [gesture translationInView:self.panel];
 
-    CGRect r = self.panel.frame;
-    r.origin.x += p.x;
-    r.origin.y += p.y;
-    self.panel.frame = r;
+    CGRect frame = self.panel.frame;
+    frame.origin.x += p.x;
+    frame.origin.y += p.y;
 
-    [g setTranslation:CGPointZero
-              inView:self.panel];
+    self.panel.frame = frame;
+
+    [gesture setTranslation:CGPointZero
+                    inView:self.panel];
 }
 
 - (void)showPanel {
@@ -656,19 +762,19 @@
     }
 
     CGFloat width =
-        MIN(350,scene.coordinateSpace.bounds.size.width-24);
+        MIN(350,
+            scene.coordinateSpace.bounds.size.width - 24);
 
     self.panel =
         [[UIWindow alloc] initWithWindowScene:scene];
 
     self.panel.frame =
-        CGRectMake(12,70,width,400);
+        CGRectMake(12, 70, width, 405);
 
     self.panel.windowLevel =
-        UIWindowLevelAlert+1;
+        UIWindowLevelAlert + 1;
 
-    UIViewController *vc =
-        [UIViewController new];
+    UIViewController *vc = [UIViewController new];
 
     vc.view.backgroundColor =
         [UIColor colorWithRed:0.06
@@ -683,75 +789,77 @@
 
     UILabel *title =
         [[UILabel alloc] initWithFrame:
-            CGRectMake(12,8,width-24,28)];
+            CGRectMake(12, 8, width - 24, 28)];
 
-    title.text =
-        @"CMSCrystalLogger v12 BALANCE";
-
+    title.text = @"CMSCrystalLogger v13";
     title.textColor = UIColor.whiteColor;
     title.font =
-        [UIFont boldSystemFontOfSize:15];
+        [UIFont boldSystemFontOfSize:16];
 
     title.userInteractionEnabled = YES;
 
     [title addGestureRecognizer:
         [[UIPanGestureRecognizer alloc]
             initWithTarget:self
-                    action:@selector(move:)]];
+                    action:@selector(movePanel:)]];
 
     [vc.view addSubview:title];
 
     self.statusLabel =
         [[UILabel alloc] initWithFrame:
-            CGRectMake(12,40,width-24,21)];
+            CGRectMake(12, 42, width - 24, 22)];
 
     self.statusLabel.font =
-        [UIFont systemFontOfSize:11];
+        [UIFont systemFontOfSize:12];
 
     [vc.view addSubview:self.statusLabel];
 
     self.balanceLabel =
         [[UILabel alloc] initWithFrame:
-            CGRectMake(12,63,width-24,22)];
+            CGRectMake(12, 68, width - 24, 26)];
 
     self.balanceLabel.textColor =
         UIColor.systemGreenColor;
+
+    self.balanceLabel.font =
+        [UIFont boldSystemFontOfSize:17];
 
     [vc.view addSubview:self.balanceLabel];
 
     self.betLabel =
         [[UILabel alloc] initWithFrame:
-            CGRectMake(12,86,width-24,22)];
+            CGRectMake(12, 98, width - 24, 24)];
 
-    self.betLabel.textColor =
-        UIColor.whiteColor;
+    self.betLabel.textColor = UIColor.whiteColor;
+    self.betLabel.font =
+        [UIFont boldSystemFontOfSize:15];
 
     [vc.view addSubview:self.betLabel];
 
-    self.resultLabel =
+    self.topLabel =
         [[UILabel alloc] initWithFrame:
-            CGRectMake(12,109,width-24,22)];
+            CGRectMake(12, 126, width - 24, 24)];
 
-    self.resultLabel.textColor =
+    self.topLabel.textColor =
         UIColor.systemYellowColor;
 
-    [vc.view addSubview:self.resultLabel];
+    [vc.view addSubview:self.topLabel];
 
-    self.regionLabel =
+    self.areaLabel =
         [[UILabel alloc] initWithFrame:
-            CGRectMake(12,132,width-24,20)];
+            CGRectMake(12, 153, width - 24, 20)];
 
-    self.regionLabel.textColor =
+    self.areaLabel.textColor =
         UIColor.lightGrayColor;
 
-    self.regionLabel.font =
+    self.areaLabel.font =
         [UIFont systemFontOfSize:11];
 
-    [vc.view addSubview:self.regionLabel];
+    [vc.view addSubview:self.areaLabel];
 
     self.logView =
         [[UITextView alloc] initWithFrame:
-            CGRectMake(10,158,width-20,132)];
+            CGRectMake(10, 178, width - 20, 128)];
 
     self.logView.backgroundColor =
         UIColor.clearColor;
@@ -768,36 +876,36 @@
     [vc.view addSubview:self.logView];
 
     CGFloat gap = 6;
-    CGFloat bw = (width-36-2*gap)/3;
+    CGFloat bw = (width - 36 - gap * 2) / 3;
 
     [self button:@"AUTO ON/OFF"
-          frame:CGRectMake(12,298,bw,34)
+          frame:CGRectMake(12, 313, bw, 34)
          action:@selector(toggle)
          parent:vc.view];
 
     [self button:@"COPY LOG"
-          frame:CGRectMake(18+bw,298,bw,34)
+          frame:CGRectMake(18 + bw, 313, bw, 34)
          action:@selector(copyLog)
          parent:vc.view];
 
-    [self button:@"TOP UP"
-          frame:CGRectMake(24+2*bw,298,bw,34)
-         action:@selector(topUp)
-         parent:vc.view];
-
-    [self button:@"TOP DOWN"
-          frame:CGRectMake(12,340,bw,34)
-         action:@selector(topDown)
-         parent:vc.view];
-
     [self button:@"BAL UP"
-          frame:CGRectMake(18+bw,340,bw,34)
+          frame:CGRectMake(24 + 2*bw, 313, bw, 34)
          action:@selector(balanceUp)
          parent:vc.view];
 
     [self button:@"BAL DOWN"
-          frame:CGRectMake(24+2*bw,340,bw,34)
+          frame:CGRectMake(12, 355, bw, 34)
          action:@selector(balanceDown)
+         parent:vc.view];
+
+    [self button:@"BET UP"
+          frame:CGRectMake(18 + bw, 355, bw, 34)
+         action:@selector(betUp)
+         parent:vc.view];
+
+    [self button:@"BET DOWN"
+          frame:CGRectMake(24 + 2*bw, 355, bw, 34)
+         action:@selector(betDown)
          parent:vc.view];
 
     self.panel.hidden = NO;
@@ -805,8 +913,10 @@
 
     [self refresh];
 
-    [self log:@"V12 READY - BALANCE/BET/TOP OCR"];
-    [self log:@"POSSIBLE SPINS ONLY - NOT CONFIRMED"];
+    [self log:@"V13 READY"];
+    [self log:@"CURRENT BET FROM GREEN BUTTON"];
+    [self log:@"BALANCE FROM UNDER SPIN BUTTON"];
+    [self log:@"CANDIDATES ONLY - NOT CONFIRMED"];
 }
 
 - (void)start {
