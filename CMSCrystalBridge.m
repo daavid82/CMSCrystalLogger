@@ -9,8 +9,7 @@
 #import <stdlib.h>
 
 // CMSCrystalBridge v9
-// Read-only diagnostics + Copy All Data
-// No calls to unknown game functions.
+// Read-only diagnostics with copy-all button.
 
 static const char *const kSymbols[] = {
     "RS_GetTripleHistoryForSymbol",
@@ -20,7 +19,7 @@ static const char *const kSymbols[] = {
     "RS_SetTargetSpinSymbol"
 };
 
-#pragma mark - Window
+#pragma mark - Pass-through window
 
 @interface CMSBridgeWindow : UIWindow
 @property(nonatomic, weak) UIView *panel;
@@ -32,6 +31,7 @@ static const char *const kSymbols[] = {
           withEvent:(UIEvent *)event {
 
     UIView *panel = self.panel;
+
     if (!panel || panel.hidden) return nil;
 
     CGPoint local =
@@ -52,14 +52,14 @@ static const char *const kSymbols[] = {
 
 @end
 
-#pragma mark - Panel
+#pragma mark - Diagnostic panel
 
 @interface CMSBridgePanel : UIView
     <UIGestureRecognizerDelegate>
 
 @property(nonatomic, strong) UITextView *details;
 @property(nonatomic, strong) UIButton *toggle;
-@property(nonatomic, strong) UIButton *copyButton;
+@property(nonatomic, strong) UIButton *copyDataButton;
 @property(nonatomic, strong) UILabel *statusLabel;
 @property(nonatomic, copy) NSString *fullReport;
 @property(nonatomic, assign) BOOL expanded;
@@ -133,41 +133,41 @@ static const char *const kSymbols[] = {
 
         [self addSubview:self.details];
 
-        self.copyButton =
+        self.copyDataButton =
             [UIButton buttonWithType:
                 UIButtonTypeSystem];
 
-        self.copyButton.frame =
+        self.copyDataButton.frame =
             CGRectMake(12, 275, 300, 42);
 
-        self.copyButton.backgroundColor =
+        self.copyDataButton.backgroundColor =
             [UIColor colorWithRed:0.10
                             green:0.55
                              blue:0.25
                             alpha:1.0];
 
-        self.copyButton.layer.cornerRadius = 8;
+        self.copyDataButton.layer.cornerRadius = 8;
 
-        [self.copyButton
+        [self.copyDataButton
             setTitle:@"KOPIERA ALL DATA"
             forState:UIControlStateNormal];
 
-        [self.copyButton
+        [self.copyDataButton
             setTitleColor:UIColor.whiteColor
             forState:UIControlStateNormal];
 
-        self.copyButton.titleLabel.font =
+        self.copyDataButton.titleLabel.font =
             [UIFont boldSystemFontOfSize:14];
 
-        [self.copyButton
+        [self.copyDataButton
             addTarget:self
             action:@selector(copyAllData)
             forControlEvents:
                 UIControlEventTouchUpInside];
 
-        self.copyButton.hidden = YES;
+        self.copyDataButton.hidden = YES;
 
-        [self addSubview:self.copyButton];
+        [self addSubview:self.copyDataButton];
 
         self.statusLabel =
             [[UILabel alloc]
@@ -234,7 +234,7 @@ static const char *const kSymbols[] = {
     self.frame = frame;
 
     self.details.hidden = !self.expanded;
-    self.copyButton.hidden = !self.expanded;
+    self.copyDataButton.hidden = !self.expanded;
     self.statusLabel.hidden = !self.expanded;
 
     [self.toggle
@@ -261,7 +261,7 @@ static const char *const kSymbols[] = {
             @"Kopierat! %lu tecken",
             (unsigned long)report.length];
 
-    [self.copyButton
+    [self.copyDataButton
         setTitle:@"KOPIERAT!"
         forState:UIControlStateNormal];
 }
@@ -673,7 +673,7 @@ static void CMSInspect(void) {
             setContentOffset:CGPointZero
             animated:NO];
 
-        [gPanel.copyButton
+        [gPanel.copyDataButton
             setTitle:@"KOPIERA ALL DATA"
             forState:UIControlStateNormal];
 
