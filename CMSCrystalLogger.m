@@ -16,13 +16,11 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 @property(nonatomic,strong) UIWindow *panel;
 @property(nonatomic,strong) UILabel *summary;
 @property(nonatomic,strong) UITextView *logView;
-
 @property(nonatomic,strong) NSTimer *motionTimer;
 @property(nonatomic,strong) NSTimer *ocrTimer;
 
 @property(nonatomic,strong) NSMutableArray<NSString *> *events;
 @property(nonatomic,strong) NSMutableDictionary<NSString *,NSNumber *> *symbols;
-
 @property(nonatomic,copy) NSData *previousPixels;
 
 @property(nonatomic,assign) BOOL running;
@@ -37,20 +35,15 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
 @property(nonatomic,assign) NSInteger visibilityHits;
 @property(nonatomic,assign) NSInteger visibilityMisses;
-
 @property(nonatomic,assign) NSInteger bet;
 @property(nonatomic,assign) NSInteger betCandidate;
 @property(nonatomic,assign) NSInteger betHits;
-
 @property(nonatomic,assign) NSInteger balanceHits;
-
 @property(nonatomic,assign) NSInteger estimated;
 @property(nonatomic,assign) NSInteger cycles;
 @property(nonatomic,assign) NSInteger unknownResults;
-
 @property(nonatomic,assign) NSInteger motionFrames;
 @property(nonatomic,assign) NSInteger ocrFrames;
-
 @property(nonatomic,assign) NSInteger movingHits;
 @property(nonatomic,assign) NSInteger stableHits;
 @property(nonatomic,assign) NSInteger settleHits;
@@ -59,18 +52,12 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 @property(nonatomic,assign) long long balanceCandidate;
 
 @property(nonatomic,assign) CMSWheelState wheelState;
-
 @property(nonatomic,assign) NSTimeInterval lastMoving;
 @property(nonatomic,assign) NSTimeInterval lastCycle;
 @property(nonatomic,assign) NSTimeInterval fpsStart;
-
 @property(nonatomic,assign) NSInteger fpsFrames;
-
 @property(nonatomic,assign) double fps;
 @property(nonatomic,assign) double motionScore;
-
-@property(nonatomic,assign) CGFloat wheelY;
-@property(nonatomic,assign) CGFloat balanceY;
 
 + (instancetype)shared;
 - (void)start;
@@ -85,9 +72,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
     dispatch_once(&once, ^{
         instance = [CMSCrystalLogger new];
-
         instance.events = [NSMutableArray new];
-
         instance.symbols = [@{
             @"ATTACK": @0,
             @"STEAL": @0,
@@ -95,10 +80,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
             @"SHIELD": @0,
             @"SPINS": @0
         } mutableCopy];
-
         instance.trimFive = YES;
-        instance.wheelY = 0.34;
-        instance.balanceY = 0.828;
     });
 
     return instance;
@@ -139,10 +121,8 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         }
     }
 
-    NSLog(@"[CMSCrystalV18] %@", line);
+    NSLog(@"[CMSCrystalV19] %@", line);
 }
-
-#pragma mark - Display
 
 - (void)refresh {
     NSString *state = @"READY";
@@ -171,18 +151,14 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
         self.running ? @"ON" : @"OFF",
         self.gameVisible ? @"YES" : @"NO",
-
         balanceText,
         betText,
-
         (long)self.estimated,
         (long)self.cycles,
         (long)self.unknownResults,
-
         state,
         self.fps,
         self.motionScore * 100.0,
-
         self.symbols[@"ATTACK"],
         self.symbols[@"STEAL"],
         self.symbols[@"POINT"],
@@ -191,7 +167,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
     ];
 }
 
-#pragma mark - Screenshot
+#pragma mark - Screen capture
 
 - (UIWindow *)gameWindow {
     UIWindow *best = nil;
@@ -261,13 +237,10 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
                 w:(CGFloat)width
                 h:(CGFloat)height {
 
-    if (!image) {
-        return NULL;
-    }
+    if (!image) return NULL;
 
     CGRect bounds = CGRectMake(
-        0,
-        0,
+        0, 0,
         CGImageGetWidth(image),
         CGImageGetHeight(image)
     );
@@ -284,9 +257,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         CGRectIntegral(rect)
     );
 
-    if (CGRectIsEmpty(rect)) {
-        return NULL;
-    }
+    if (CGRectIsEmpty(rect)) return NULL;
 
     return CGImageCreateWithImageInRect(image, rect);
 }
@@ -294,9 +265,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 #pragma mark - Motion pixels
 
 - (NSData *)pixels:(CGImageRef)image {
-    if (!image) {
-        return nil;
-    }
+    if (!image) return nil;
 
     const size_t width = 48;
     const size_t height = 32;
@@ -320,9 +289,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
     CGColorSpaceRelease(colorSpace);
 
-    if (!context) {
-        return nil;
-    }
+    if (!context) return nil;
 
     CGContextSetInterpolationQuality(
         context,
@@ -363,7 +330,6 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
 - (void)resetMotion {
     self.previousPixels = nil;
-
     self.wheelState = CMSReady;
     self.movingHits = 0;
     self.stableHits = 0;
@@ -374,9 +340,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 #pragma mark - OCR
 
 - (NSArray<NSDictionary *> *)ocr:(CGImageRef)image {
-    if (!image) {
-        return @[];
-    }
+    if (!image) return @[];
 
     VNRecognizeTextRequest *request =
         [VNRecognizeTextRequest new];
@@ -432,17 +396,15 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
     NSMutableString *output = [NSMutableString new];
 
     for (NSUInteger i = 0; i < input.length; i++) {
-        unichar character = [input characterAtIndex:i];
+        unichar c = [input characterAtIndex:i];
 
-        if (character >= '0' && character <= '9') {
-            [output appendFormat:@"%C", character];
+        if (c >= '0' && c <= '9') {
+            [output appendFormat:@"%C", c];
         }
     }
 
     return output;
 }
-
-#pragma mark - Read balance
 
 - (long long)readBalance:
     (NSArray<NSDictionary *> *)items {
@@ -453,9 +415,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
                 stringByTrimmingCharactersInSet:
                     [NSCharacterSet whitespaceAndNewlineCharacterSet]];
 
-        if (![text hasPrefix:@"+"]) {
-            continue;
-        }
+        if (![text hasPrefix:@"+"]) continue;
 
         NSString *tail = [text substringFromIndex:1];
         NSString *number = [self digits:tail];
@@ -473,9 +433,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
                 stringByReplacingOccurrencesOfString:@"."
                 withString:@""];
 
-        if (![clean hasPrefix:number]) {
-            continue;
-        }
+        if (![clean hasPrefix:number]) continue;
 
         long long value = number.longLongValue;
 
@@ -490,8 +448,6 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
     return -1;
 }
-
-#pragma mark - Read bet
 
 - (NSInteger)readBet:
     (NSArray<NSDictionary *> *)items {
@@ -541,40 +497,31 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         self.balanceHits = 1;
     }
 
-    if (self.balanceHits < 2) {
-        return;
-    }
+    if (self.balanceHits < 2) return;
 
     if (!self.hasBalance) {
         self.hasBalance = YES;
         self.balance = value;
 
         [self log:[NSString stringWithFormat:
-            @"BALANCE BASELINE %lld",
-            value]];
+            @"BALANCE BASELINE %lld", value]];
 
         return;
     }
 
-    if (value == self.balance) {
-        return;
-    }
+    if (value == self.balance) return;
 
     long long delta = value - self.balance;
 
     if (llabs(delta) > 100000) {
         [self log:[NSString stringWithFormat:
-            @"BALANCE OCR REJECTED %lld",
-            value]];
-
+            @"BALANCE OCR REJECTED %lld", value]];
         return;
     }
 
     [self log:[NSString stringWithFormat:
         @"BALANCE %lld -> %lld (%+lld)",
-        self.balance,
-        value,
-        delta]];
+        self.balance, value, delta]];
 
     self.balance = value;
 
@@ -589,8 +536,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
             [self log:[NSString stringWithFormat:
                 @"ESTIMATED SPINS +%lld | TOTAL %ld",
-                count,
-                (long)self.estimated]];
+                count, (long)self.estimated]];
         }
     }
 }
@@ -612,8 +558,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         self.bet = value;
 
         [self log:[NSString stringWithFormat:
-            @"BET VERIFIED x%ld",
-            (long)value]];
+            @"BET VERIFIED x%ld", (long)value]];
     }
 }
 
@@ -629,7 +574,6 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
             self.gameVisible = YES;
             [self resetMotion];
-
             [self log:@"GAME SCREEN DETECTED"];
         }
     } else {
@@ -641,18 +585,15 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
             self.gameVisible = NO;
             [self resetMotion];
-
             [self log:@"GAME SCREEN LOST"];
         }
     }
 }
 
-#pragma mark - Balance OCR timer
+#pragma mark - OCR timer
 
 - (void)ocrTick:(NSTimer *)timer {
-    if (!self.running || self.ocrBusy) {
-        return;
-    }
+    if (!self.running || self.ocrBusy) return;
 
     self.ocrBusy = YES;
 
@@ -666,7 +607,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
     CGImageRef balanceImage =
         [self crop:frame.CGImage
                 x:0.39
-                y:self.balanceY
+                y:0.828
                 w:0.23
                 h:0.036];
 
@@ -678,14 +619,8 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
                 h:0.055];
 
     if (!balanceImage || !betImage) {
-        if (balanceImage) {
-            CGImageRelease(balanceImage);
-        }
-
-        if (betImage) {
-            CGImageRelease(betImage);
-        }
-
+        if (balanceImage) CGImageRelease(balanceImage);
+        if (betImage) CGImageRelease(betImage);
         self.ocrBusy = NO;
         return;
     }
@@ -741,8 +676,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
                 if (self.ocrFrames % 8 == 0) {
                     [self log:[NSString stringWithFormat:
                         @"OCR BAL %@ | BET %@",
-                        rawBalance,
-                        rawBet]];
+                        rawBalance, rawBet]];
                 }
 
                 [self refresh];
@@ -751,7 +685,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
     });
 }
 
-#pragma mark - Symbol detection
+#pragma mark - Symbol recognition
 
 - (NSString *)symbolFrom:
     (NSArray<NSDictionary *> *)items {
@@ -763,9 +697,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         float confidence =
             [item[@"confidence"] floatValue];
 
-        if (confidence < 0.55f) {
-            continue;
-        }
+        if (confidence < 0.55f) continue;
 
         NSString *text =
             [item[@"text"] uppercaseString];
@@ -798,14 +730,10 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         }
     }
 
-    if (found.count == 1) {
-        return found.anyObject;
-    }
-
-    return @"";
+    return found.count == 1 ? found.anyObject : @"";
 }
 
-#pragma mark - Result scans
+#pragma mark - Result sampling
 
 - (void)resultScanForGeneration:(NSUInteger)generation
                           cycle:(NSInteger)cycle
@@ -820,20 +748,17 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
     UIImage *frame = [self capture];
 
-    if (!frame.CGImage) {
-        return;
-    }
+    if (!frame.CGImage) return;
 
+    // V19: small, centered OCR area at top of wheel.
     CGImageRef region =
         [self crop:frame.CGImage
-                x:0.31
+                x:0.39
                 y:0.20
-                w:0.38
-                h:0.12];
+                w:0.22
+                h:0.10];
 
-    if (!region) {
-        return;
-    }
+    if (!region) return;
 
     dispatch_async(
         dispatch_get_global_queue(
@@ -893,8 +818,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
                         [self log:[NSString stringWithFormat:
                             @"REPEATED SYMBOL %@ (%ld/3) | NOT VERIFIED WINNER",
-                            best,
-                            (long)bestVotes]];
+                            best, (long)bestVotes]];
                     } else {
                         self.unknownResults++;
 
@@ -912,9 +836,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 }
 
 - (void)beginResultScan {
-    if (self.resultBusy || !self.running) {
-        return;
-    }
+    if (self.resultBusy || !self.running) return;
 
     self.resultBusy = YES;
 
@@ -948,7 +870,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
     }
 }
 
-#pragma mark - Fast wheel tracking
+#pragma mark - Fast motion tracking
 
 - (void)motionTick:(NSTimer *)timer {
     if (!self.running ||
@@ -966,24 +888,22 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         return;
     }
 
+    // V19: much smaller area near the top-center
+    // of the wheel. Avoid unrelated screen animation.
     CGImageRef region =
         [self crop:frame.CGImage
-                x:0.23
-                y:self.wheelY
-                w:0.54
-                h:0.25];
+                x:0.43
+                y:0.30
+                w:0.14
+                h:0.10];
 
     NSData *pixels = [self pixels:region];
 
-    if (region) {
-        CGImageRelease(region);
-    }
+    if (region) CGImageRelease(region);
 
     self.motionBusy = NO;
 
-    if (!pixels) {
-        return;
-    }
+    if (!pixels) return;
 
     self.motionFrames++;
 
@@ -993,6 +913,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
     if (self.fpsStart == 0) {
         self.fpsStart = now;
         self.fpsFrames = self.motionFrames;
+
     } else if (now - self.fpsStart >= 2.0) {
         self.fps =
             (self.motionFrames - self.fpsFrames) /
@@ -1002,8 +923,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         self.fpsFrames = self.motionFrames;
 
         [self log:[NSString stringWithFormat:
-            @"ACTUAL MOTION FPS %.1f",
-            self.fps]];
+            @"ACTUAL MOTION FPS %.1f", self.fps]];
     }
 
     if (!self.previousPixels) {
@@ -1016,9 +936,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
     self.previousPixels = pixels;
 
-    if (score < 0) {
-        return;
-    }
+    if (score < 0) return;
 
     self.motionScore = score;
 
@@ -1029,9 +947,11 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         self.movingHits++;
         self.stableHits = 0;
         self.lastMoving = now;
+
     } else if (stable) {
         self.stableHits++;
         self.movingHits = 0;
+
     } else {
         self.movingHits = 0;
         self.stableHits = 0;
@@ -1043,8 +963,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         self.wheelState = CMSMoving;
 
         [self log:[NSString stringWithFormat:
-            @"MOTION START %.3f",
-            score]];
+            @"MOTION START %.3f", score]];
 
     } else if (self.wheelState == CMSMoving &&
                self.stableHits >= 2 &&
@@ -1112,24 +1031,18 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         self.estimated = 0;
         self.cycles = 0;
         self.unknownResults = 0;
-
         self.motionFrames = 0;
         self.ocrFrames = 0;
-
         self.fps = 0;
         self.fpsStart = 0;
         self.lastCycle = 0;
-
         self.bet = 0;
         self.betHits = 0;
-
         self.hasBalance = NO;
         self.balanceHits = 0;
-
         self.gameVisible = NO;
         self.visibilityHits = 0;
         self.visibilityMisses = 0;
-
         self.resultBusy = NO;
 
         for (NSString *key in self.symbols.allKeys) {
@@ -1153,7 +1066,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
                                             repeats:YES];
 
         [self log:
-            @"AUTO STARTED V18 | MOTION TARGET 20 FPS | OCR 600MS"];
+            @"AUTO STARTED V19 | SMALL TOP WHEEL AREA | TARGET 20 FPS"];
 
         [self ocrTick:nil];
     }
@@ -1170,7 +1083,6 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 
 - (void)toggleTrim {
     self.trimFive = !self.trimFive;
-
     self.hasBalance = NO;
     self.balanceHits = 0;
 
@@ -1181,20 +1093,6 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
     [self refresh];
 }
 
-- (void)wheelUp {
-    self.wheelY = MAX(0.15, self.wheelY - 0.02);
-
-    [self resetMotion];
-    [self log:@"WHEEL AREA UP"];
-}
-
-- (void)wheelDown {
-    self.wheelY = MIN(0.65, self.wheelY + 0.02);
-
-    [self resetMotion];
-    [self log:@"WHEEL AREA DOWN"];
-}
-
 - (void)resetBalance {
     self.hasBalance = NO;
     self.balanceHits = 0;
@@ -1203,7 +1101,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
     [self refresh];
 }
 
-#pragma mark - Interface
+#pragma mark - Panel
 
 - (void)movePanel:(UIPanGestureRecognizer *)gesture {
     CGPoint point =
@@ -1254,9 +1152,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
 }
 
 - (void)showPanel {
-    if (self.panel) {
-        return;
-    }
+    if (self.panel) return;
 
     UIWindowScene *scene = nil;
 
@@ -1278,7 +1174,6 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
             dispatch_get_main_queue(), ^{
                 [self showPanel];
             });
-
         return;
     }
 
@@ -1291,7 +1186,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         [[UIWindow alloc] initWithWindowScene:scene];
 
     self.panel.frame =
-        CGRectMake(12, 65, width, 470);
+        CGRectMake(12, 65, width, 430);
 
     self.panel.windowLevel =
         UIWindowLevelAlert + 1;
@@ -1314,17 +1209,16 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         [[UILabel alloc] initWithFrame:
             CGRectMake(12, 8, width - 24, 28)];
 
-    title.text = @"CMSCrystalLogger v18 SMART";
+    title.text = @"CMSCrystalLogger v19 TOP";
     title.textColor = UIColor.whiteColor;
     title.font = [UIFont boldSystemFontOfSize:16];
     title.userInteractionEnabled = YES;
 
-    UIPanGestureRecognizer *pan =
+    [title addGestureRecognizer:
         [[UIPanGestureRecognizer alloc]
             initWithTarget:self
-                    action:@selector(movePanel:)];
+                    action:@selector(movePanel:)]];
 
-    [title addGestureRecognizer:pan];
     [controller.view addSubview:title];
 
     self.summary =
@@ -1332,9 +1226,7 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
             CGRectMake(12, 43, width - 24, 147)];
 
     self.summary.numberOfLines = 6;
-
-    self.summary.textColor =
-        UIColor.systemGreenColor;
+    self.summary.textColor = UIColor.systemGreenColor;
 
     self.summary.font =
         [UIFont monospacedSystemFontOfSize:11
@@ -1349,11 +1241,8 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
         [[UITextView alloc] initWithFrame:
             CGRectMake(10, 196, width - 20, 142)];
 
-    self.logView.backgroundColor =
-        UIColor.clearColor;
-
-    self.logView.textColor =
-        UIColor.systemGreenColor;
+    self.logView.backgroundColor = UIColor.clearColor;
+    self.logView.textColor = UIColor.systemGreenColor;
 
     self.logView.font =
         [UIFont monospacedSystemFontOfSize:10
@@ -1388,36 +1277,22 @@ typedef NS_ENUM(NSInteger, CMSWheelState) {
              action:@selector(toggleTrim)
              parent:controller.view];
 
-    [self addButton:@"WHEEL UP"
-                  x:12
-                  y:385
-              width:buttonWidth
-             action:@selector(wheelUp)
-             parent:controller.view];
-
-    [self addButton:@"WHEEL DOWN"
-                  x:18 + buttonWidth
-                  y:385
-              width:buttonWidth
-             action:@selector(wheelDown)
-             parent:controller.view];
-
     [self addButton:@"RESET BAL"
-                  x:24 + 2 * buttonWidth
+                  x:12
                   y:385
               width:buttonWidth
              action:@selector(resetBalance)
              parent:controller.view];
 
     self.panel.hidden = NO;
-
     [self.panel makeKeyAndVisible];
 
     [self refresh];
 
-    [self log:@"V18 READY"];
-    [self log:@"3 RESULT SAMPLES PER OBSERVED CYCLE"];
-    [self log:@"SYMBOL COUNTS ARE NOT VERIFIED WINNERS"];
+    [self log:@"V19 READY"];
+    [self log:@"MOTION ROI x=.43 y=.30 w=.14 h=.10"];
+    [self log:@"RESULT ROI x=.39 y=.20 w=.22 h=.10"];
+    [self log:@"SYMBOL COUNTS NOT VERIFIED"];
 }
 
 - (void)start {
